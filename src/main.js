@@ -182,7 +182,7 @@ const fadeTexture = new THREE.CanvasTexture(fadeCanvas);
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(12, 12),
   new THREE.MeshStandardMaterial({
-    color: '#b6bbbd',
+    color: '#d7dddf',
     roughness: 1,
     metalness: 0,
     alphaMap: fadeTexture,
