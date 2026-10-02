@@ -27,53 +27,69 @@ export function createUI() {
         <div id="viewer">
           <div id="status" role="status">Loading Porsche…</div>
 
-          <details class="scene-tools">
-            <summary>Adjust scene</summary>
-
-            <label>
-              Background
-              <select id="background">
-                <option value="panorama">Panorama</option>
-                <option value="studio">Light studio</option>
-                <option value="dark">Dark studio</option>
-              </select>
-            </label>
-
+          <div class="scene-tools" aria-label="Scene controls">
+            <div id="scene-settings" class="scene-settings" hidden>
+              <div class="scene-presets">
+                <fieldset class="scene-choice">
+                  <legend>Background</legend>
+                  <div class="background-options">
+                    <button type="button" class="background-tile" data-background="studio" aria-pressed="true">
+                      <span class="background-art studio-art" aria-hidden="true"></span><span>Light studio</span>
+                    </button>
+                    <button type="button" class="background-tile" data-background="dark" aria-pressed="false">
+                      <span class="background-art dark-art" aria-hidden="true"></span><span>Dark studio</span>
+                    </button>
+                    <button type="button" class="background-tile" data-background="panorama" aria-pressed="false">
+                      <span class="background-art panorama-art" aria-hidden="true"></span><span>Panorama</span>
+                    </button>
+                  </div>
+                </fieldset>
+                <fieldset class="scene-choice">
+                  <legend>Time of day</legend>
+                  <div class="time-options">
+                    <button type="button" data-time="day" aria-pressed="true">Day</button>
+                    <button type="button" data-time="night" aria-pressed="false">Night</button>
+                  </div>
+                </fieldset>
+              </div>
+              <details class="scene-advanced">
+                <summary>Fine adjustments</summary>
+                <div class="scene-sliders">
             <label>
               Environment brightness
-              <output id="brightness-value">1.00</output>
+              <output id="brightness-value">0.50</output>
               <input
                 id="brightness"
                 type="range"
                 min="0"
                 max="3"
-                step="0.05"
-                value="1"
+                step="0.01"
+                value="0.5"
               >
             </label>
 
             <label>
               Environment rotation
-              <output id="rotation-value">0°</output>
+              <output id="rotation-value">184°</output>
               <input
                 id="rotation"
                 type="range"
                 min="0"
                 max="360"
-                value="0"
+                value="184"
               >
             </label>
 
             <label>
               Exposure
-              <output id="exposure-value">1.00</output>
+              <output id="exposure-value">1.25</output>
               <input
                 id="exposure"
                 type="range"
                 min="0.2"
                 max="2"
                 step="0.05"
-                value="1"
+                value="1.25"
               >
             </label>
 
@@ -87,27 +103,27 @@ export function createUI() {
 
               <label>
                 Focus distance
-                <output id="dof-focus-value">2.20</output>
+                <output id="dof-focus-value">0.96</output>
                 <input
                   id="dof-focus"
                   type="range"
                   min="0.2"
                   max="8"
                   step="0.01"
-                  value="2.2"
+                  value="0.96"
                 >
               </label>
 
               <label>
                 Blur strength
-                <output id="dof-aperture-value">0.008</output>
+                <output id="dof-aperture-value">0.003</output>
                 <input
                   id="dof-aperture"
                   type="range"
                   min="0"
                   max="0.04"
                   step="0.001"
-                  value="0.008"
+                  value="0.003"
                 >
               </label>
 
@@ -129,11 +145,25 @@ export function createUI() {
                 Focus distance uses viewer units.
               </p>
             </fieldset>
-          </details>
-
-          <button id="reset-view" class="reset" disabled>
-            Reset view ↺
-          </button>
+                </div>
+              </details>
+            </div>
+            <div class="scene-toolbar">
+              <button id="scene-toggle" type="button" aria-expanded="false" aria-controls="scene-settings">
+                <svg class="scene-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+                Adjust scene
+              </button>
+              <button id="auto-rotate" type="button" aria-pressed="false" disabled title="Rotate the car view">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M19 12a7 7 0 0 0-12-5M5 12a7 7 0 0 0 12 5"/></svg>
+                360° View
+              </button>
+              <button id="reset-view" type="button" disabled title="Reset camera to Overview">Reset view ↺</button>
+              <button id="viewer-fullscreen" type="button" class="fullscreen-button" aria-label="Enter fullscreen" title="Fullscreen">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3H3v6M15 3h6v6M3 15v6h6M21 15v6h-6"/></svg>
+              </button>
+            </div>
+            <p id="scene-feedback" class="scene-feedback" role="status" hidden></p>
+          </div>
         </div>
 
         <nav id="views" aria-label="Camera views"></nav>
@@ -209,14 +239,14 @@ export function createUI() {
         <details class="option-section">
           <summary>
             Wheels
-            <span id="wheel-label">Original wheels</span>
+            <span id="wheel-label">Standard Option</span>
           </summary>
 
           <div id="wheel-options" class="cards"></div>
 
           <p class="note">
-            Alternate designs are UI placeholders.
-            The 3D wheels stay unchanged.
+            Images preview each wheel option.
+            Selecting an option does not change the 3D wheels yet.
           </p>
         </details>
 
@@ -263,7 +293,7 @@ export function createUI() {
 
   const state = {
     paint: "Original",
-    wheels: "Original wheels",
+    wheels: "Standard Option",
     seats: "Original seats",
   };
 
@@ -283,7 +313,7 @@ export function createUI() {
   // Restore locally saved cameras.
   try {
     const data = JSON.parse(
-      localStorage.getItem("porsche-camera-views-v1") || "[]"
+      localStorage.getItem("porsche-camera-views-v1") || "[]",
     );
 
     if (Array.isArray(data)) {
@@ -301,7 +331,7 @@ export function createUI() {
         (key) =>
           Array.isArray(view[key]) &&
           view[key].length === 3 &&
-          view[key].every(Number.isFinite)
+          view[key].every(Number.isFinite),
       ) &&
       Number.isFinite(view.fov) &&
       view.fov >= 20 &&
@@ -334,7 +364,7 @@ export function createUI() {
     document.querySelectorAll("[data-selection]").forEach((button) => {
       button.setAttribute(
         "aria-pressed",
-        String(state[button.dataset.selection] === button.dataset.value)
+        String(state[button.dataset.selection] === button.dataset.value),
       );
     });
   }
@@ -367,25 +397,39 @@ export function createUI() {
     document.querySelector("#paint-swatches").append(button);
   });
 
-  // Placeholder artwork
-  const wheelIcon = `
-    <svg viewBox="0 0 100 70" aria-hidden="true">
-      <circle cx="50" cy="35" r="27"/>
-      <circle cx="50" cy="35" r="20"/>
-      <circle cx="50" cy="35" r="5"/>
-      <path d="
-        M50 10v20
-        m0 10v20
-        M25 35h20
-        m10 0h20
-        M32 17l14 14
-        m8 8 14 14
-        M32 53l14-14
-        m8-8 14-14
-      "/>
-    </svg>
-  `;
+  // Wheel images: keep file names and requested display order together.
+  const wheelFiles = [
+    "Standard_Option.png",
+    "Lightweaight_Option.png",
+    "Esclusive_Option.png",
+  ];
 
+  wheelFiles.forEach((file) => {
+    const name = file.replace(/\.png$/i, "").replaceAll("_", " ");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "option-card wheel-card";
+    button.dataset.selection = "wheels";
+    button.dataset.value = name;
+    const image = document.createElement("img");
+    image.className = "wheel-option-image";
+    image.src = `${import.meta.env.BASE_URL}images/wheels/${file}`;
+    image.alt = "";
+    image.width = 960;
+    image.height = 960;
+    image.loading = "lazy";
+    image.decoding = "async";
+    const label = document.createElement("strong");
+    label.textContent = name;
+    button.append(image, label);
+    button.onclick = () => {
+      state.wheels = name;
+      refresh();
+    };
+    document.querySelector("#wheel-options").append(button);
+  });
+
+  // Seat placeholder artwork
   const seatIcon = `
     <svg viewBox="0 0 100 70" aria-hidden="true">
       <path d="
@@ -399,12 +443,6 @@ export function createUI() {
   `;
 
   const placeholderGroups = [
-    [
-      "wheels",
-      "wheel-options",
-      ["Original wheels", "Sport design", "Classic design"],
-      wheelIcon,
-    ],
     [
       "seats",
       "seat-options",
@@ -451,14 +489,7 @@ export function createUI() {
     Top: "◇",
   };
 
-  const viewNames = [
-    "Overview",
-    "Rear",
-    "Side",
-    "Tire",
-    "Front",
-    "Top",
-  ];
+  const viewNames = ["Overview", "Rear", "Side", "Tire", "Front", "Top"];
 
   viewNames.forEach((name, index) => {
     const button = document.createElement("button");
@@ -477,10 +508,7 @@ export function createUI() {
       actions.view(name);
 
       document.querySelectorAll(".view-button").forEach((other) => {
-        other.setAttribute(
-          "aria-pressed",
-          String(other === button)
-        );
+        other.setAttribute("aria-pressed", String(other === button));
       });
     };
 
@@ -523,14 +551,14 @@ export function createUI() {
         selections: state,
         placeholderCategories: ["wheels", "seats"],
       },
-      "porsche-configuration.json"
+      "porsche-configuration.json",
     );
   };
 
   document.querySelector("#reset-config").onclick = () => {
     Object.assign(state, {
       paint: "Original",
-      wheels: "Original wheels",
+      wheels: "Standard Option",
       seats: "Original seats",
     });
 
@@ -550,9 +578,79 @@ export function createUI() {
   };
 
   // Environment controls
-  document.querySelector("#background").onchange = (event) => {
-    actions.environment?.("background", event.target.value);
+  const scenePanel = document.querySelector("#scene-settings");
+  const sceneToggle = document.querySelector("#scene-toggle");
+  function toggleScene(open) {
+    scenePanel.hidden = !open;
+    sceneToggle.setAttribute("aria-expanded", String(open));
+  }
+  sceneToggle.onclick = () => toggleScene(scenePanel.hidden);
+  document
+    .querySelector(".scene-tools")
+    .addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !scenePanel.hidden) {
+        toggleScene(false);
+        sceneToggle.focus();
+        event.stopPropagation();
+      }
+    });
+  document.querySelectorAll("[data-background]").forEach((button) => {
+    button.onclick = () => {
+      document.querySelectorAll("[data-background]").forEach((other) => {
+        other.setAttribute("aria-pressed", String(other === button));
+      });
+      actions.environment?.("background", button.dataset.background);
+    };
+  });
+  document.querySelectorAll("[data-time]").forEach((button) => {
+    button.onclick = () => {
+      document.querySelectorAll("[data-time]").forEach((other) => {
+        other.setAttribute("aria-pressed", String(other === button));
+      });
+      const night = button.dataset.time === "night";
+      for (const [id, value] of Object.entries({
+        brightness: night ? 0.16 : 0.5,
+        exposure: night ? 0.85 : 1.25,
+      })) {
+        document.getElementById(id).value = value;
+        document.getElementById(`${id}-value`).textContent = value.toFixed(2);
+      }
+      actions.environment?.("timeOfDay", button.dataset.time);
+    };
+  });
+  const rotateButton = document.querySelector("#auto-rotate");
+  function syncAutoRotate(enabled) {
+    rotateButton.setAttribute("aria-pressed", String(enabled));
+  }
+  rotateButton.onclick = () => {
+    const enabled = rotateButton.getAttribute("aria-pressed") !== "true";
+    syncAutoRotate(enabled);
+    actions.autoRotate?.(enabled);
   };
+  const fullscreenButton = document.querySelector("#viewer-fullscreen");
+  const viewerElement = document.querySelector("#viewer");
+  if (!viewerElement.requestFullscreen) fullscreenButton.hidden = true;
+  fullscreenButton.onclick = async () => {
+    const feedback = document.querySelector("#scene-feedback");
+    feedback.hidden = true;
+    try {
+      if (document.fullscreenElement === viewerElement)
+        await document.exitFullscreen();
+      else await viewerElement.requestFullscreen();
+    } catch {
+      feedback.textContent =
+        "Fullscreen is unavailable in this browser window.";
+      feedback.hidden = false;
+    }
+  };
+  document.addEventListener("fullscreenchange", () => {
+    const fullscreen = document.fullscreenElement === viewerElement;
+    fullscreenButton.setAttribute(
+      "aria-label",
+      fullscreen ? "Exit fullscreen" : "Enter fullscreen",
+    );
+    fullscreenButton.title = fullscreen ? "Exit fullscreen" : "Fullscreen";
+  });
 
   ["brightness", "rotation", "exposure"].forEach((id) => {
     document.getElementById(id).oninput = (event) => {
@@ -574,8 +672,9 @@ export function createUI() {
     document.getElementById(`dof-${key}`).oninput = (event) => {
       const value = Number(event.target.value);
 
-      document.getElementById(`dof-${key}-value`).textContent =
-        value.toFixed(key === "focus" ? 2 : 3);
+      document.getElementById(`dof-${key}-value`).textContent = value.toFixed(
+        key === "focus" ? 2 : 3,
+      );
 
       actions.dof?.(key, value);
     };
@@ -593,8 +692,7 @@ export function createUI() {
       select.append(option);
     });
 
-    document.querySelector("#load-view").disabled =
-      !ready || !views.length;
+    document.querySelector("#load-view").disabled = !ready || !views.length;
 
     document.querySelector("#export-views").disabled = !views.length;
   }
@@ -624,9 +722,7 @@ export function createUI() {
       ...actions.capture(),
     };
 
-    const existingIndex = views.findIndex(
-      (item) => item.name === name
-    );
+    const existingIndex = views.findIndex((item) => item.name === name);
 
     if (existingIndex < 0) {
       views.push(view);
@@ -635,10 +731,7 @@ export function createUI() {
     }
 
     try {
-      localStorage.setItem(
-        "porsche-camera-views-v1",
-        JSON.stringify(views)
-      );
+      localStorage.setItem("porsche-camera-views-v1", JSON.stringify(views));
 
       message.textContent = `Saved “${name}” in this browser.`;
     } catch {
@@ -648,14 +741,13 @@ export function createUI() {
 
     refreshSaved();
 
-    document.querySelector("#saved-views").value =
-      views.findIndex((item) => item.name === name);
+    document.querySelector("#saved-views").value = views.findIndex(
+      (item) => item.name === name,
+    );
   };
 
   document.querySelector("#load-view").onclick = () => {
-    const index = Number(
-      document.querySelector("#saved-views").value
-    );
+    const index = Number(document.querySelector("#saved-views").value);
 
     const view = views[index];
 
@@ -669,18 +761,16 @@ export function createUI() {
   document.querySelector("#export-views").onclick = () => {
     download(
       {
-        coordinateSystem:
-          "Viewer space: car centered, longest side 4 units",
+        coordinateSystem: "Viewer space: car centered, longest side 4 units",
         views,
       },
-      "camera-views.json"
+      "camera-views.json",
     );
   };
 
   function syncFov(value) {
     document.querySelector("#fov").value = value;
-    document.querySelector("#fov-value").textContent =
-      `${Math.round(value)}°`;
+    document.querySelector("#fov-value").textContent = `${Math.round(value)}°`;
   }
 
   refresh();
@@ -698,7 +788,9 @@ export function createUI() {
       ready = true;
 
       document
-        .querySelectorAll(".view-button, #reset-view, #capture-view")
+        .querySelectorAll(
+          ".view-button, #reset-view, #capture-view, #auto-rotate",
+        )
         .forEach((button) => {
           button.disabled = false;
         });
@@ -718,6 +810,7 @@ export function createUI() {
     },
 
     syncFov,
+    syncAutoRotate,
 
     manualView() {
       document.querySelectorAll(".view-button").forEach((button) => {
