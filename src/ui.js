@@ -15,6 +15,8 @@ export function createUI() {
       </span>
 
       <div>
+        <button id="toggle-viewer-overlays" type="button" aria-pressed="false">Hide viewer controls</button>
+        <button id="toggle-camera-tools" type="button" aria-expanded="false" aria-controls="dev-panel">Camera tools</button>
         <button id="save-config">Save configuration</button>
         <button id="summary-toggle" class="primary">
           Summary ↗
@@ -52,101 +54,7 @@ export function createUI() {
                   </div>
                 </fieldset>
               </div>
-              <details class="scene-advanced">
-                <summary>Fine adjustments</summary>
-                <div class="scene-sliders">
-            <label>
-              Environment brightness
-              <output id="brightness-value">0.50</output>
-              <input
-                id="brightness"
-                type="range"
-                min="0"
-                max="3"
-                step="0.01"
-                value="0.5"
-              >
-            </label>
 
-            <label>
-              Environment rotation
-              <output id="rotation-value">184°</output>
-              <input
-                id="rotation"
-                type="range"
-                min="0"
-                max="360"
-                value="184"
-              >
-            </label>
-
-            <label>
-              Exposure
-              <output id="exposure-value">1.25</output>
-              <input
-                id="exposure"
-                type="range"
-                min="0.2"
-                max="2"
-                step="0.05"
-                value="1.25"
-              >
-            </label>
-
-            <fieldset id="dof-controls">
-              <legend>Tire depth of field</legend>
-
-              <label>
-                <input id="dof-enabled" type="checkbox" checked>
-                Enable in Tire view
-              </label>
-
-              <label>
-                Focus distance
-                <output id="dof-focus-value">0.96</output>
-                <input
-                  id="dof-focus"
-                  type="range"
-                  min="0.2"
-                  max="8"
-                  step="0.01"
-                  value="0.96"
-                >
-              </label>
-
-              <label>
-                Blur strength
-                <output id="dof-aperture-value">0.003</output>
-                <input
-                  id="dof-aperture"
-                  type="range"
-                  min="0"
-                  max="0.04"
-                  step="0.001"
-                  value="0.003"
-                >
-              </label>
-
-              <label>
-                Maximum blur
-                <output id="dof-maxblur-value">0.008</output>
-                <input
-                  id="dof-maxblur"
-                  type="range"
-                  min="0"
-                  max="0.02"
-                  step="0.001"
-                  value="0.008"
-                >
-              </label>
-
-              <p class="note">
-                Select Tire, then adjust focus until the wheel is sharp.
-                Focus distance uses viewer units.
-              </p>
-            </fieldset>
-                </div>
-              </details>
             </div>
             <div class="scene-toolbar">
               <button id="scene-toggle" type="button" aria-expanded="false" aria-controls="scene-settings">
@@ -212,6 +120,105 @@ export function createUI() {
             <button id="export-views" disabled>
               Download views JSON
             </button>
+
+              <details id="dev-fine-adjustments" class="scene-advanced">
+                <summary>Fine adjustments</summary>
+                <div class="scene-sliders">
+            <label>
+              Environment brightness
+              <output id="brightness-value">0.50</output>
+              <input
+                id="brightness"
+                type="range"
+                min="0"
+                max="3"
+                step="0.01"
+                value="0.5"
+              >
+            </label>
+
+            <label>
+              Environment rotation
+              <output id="rotation-value">184°</output>
+              <input
+                id="rotation"
+                type="range"
+                min="0"
+                max="360"
+                value="184"
+              >
+            </label>
+
+            <label>
+              Exposure
+              <output id="exposure-value">1.25</output>
+              <input
+                id="exposure"
+                type="range"
+                min="0.2"
+                max="2"
+                step="0.05"
+                value="1.25"
+              >
+            </label>
+
+            <fieldset id="dof-controls">
+              <legend>Distance depth of field</legend>
+
+              <label>
+                <input id="dof-enabled" type="checkbox" checked>
+                Enable close-up depth of field
+              </label>
+
+              <label>
+                <input id="dof-autofocus" type="checkbox" checked>
+                Autofocus on car
+              </label>
+              <label>
+                Manual focus distance
+                <output id="dof-focus-value">0.96</output>
+                <input
+                  id="dof-focus"
+                  type="range"
+                  min="0.2"
+                  max="8"
+                  step="0.01"
+                  value="0.96"
+                >
+              </label>
+
+              <label>
+                Blur strength
+                <output id="dof-aperture-value">0.003</output>
+                <input
+                  id="dof-aperture"
+                  type="range"
+                  min="0"
+                  max="0.04"
+                  step="0.001"
+                  value="0.003"
+                >
+              </label>
+
+              <label>
+                Maximum blur
+                <output id="dof-maxblur-value">0.008</output>
+                <input
+                  id="dof-maxblur"
+                  type="range"
+                  min="0"
+                  max="0.02"
+                  step="0.001"
+                  value="0.008"
+                >
+              </label>
+
+              <p class="note">
+                Zoom closer for blur; pull back for a sharp full-car view. Disable autofocus to use manual focus.
+              </p>
+            </fieldset>
+                </div>
+              </details>
 
             <p id="dev-message" role="status">
               Wait for the car to load, then compose your shot.
@@ -480,15 +487,6 @@ export function createUI() {
   });
 
   // Camera buttons
-  const viewIcons = {
-    Overview: "◩",
-    Rear: "▱",
-    Side: "▰",
-    Tire: "◉",
-    Front: "▱",
-    Top: "◇",
-  };
-
   const viewNames = ["Overview", "Rear", "Side", "Tire", "Front", "Top"];
 
   viewNames.forEach((name, index) => {
@@ -498,7 +496,7 @@ export function createUI() {
     button.className = "view-button";
 
     button.innerHTML = `
-      <span class="view-symbol">${viewIcons[name]}</span>
+      <img class="view-thumbnail" src="${import.meta.env.BASE_URL}views/${name}.png" alt="" draggable="false">
       <span>${name}</span>
     `;
 
@@ -663,6 +661,12 @@ export function createUI() {
     };
   });
 
+  document.querySelector("#dof-focus").disabled = true;
+  document.querySelector("#dof-autofocus").onchange = (event) => {
+    document.querySelector("#dof-focus").disabled = event.target.checked;
+    actions.dof?.("autoFocus", event.target.checked);
+  };
+
   // Depth-of-field controls
   document.querySelector("#dof-enabled").onchange = (event) => {
     actions.dof?.("enabled", event.target.checked);
@@ -700,6 +704,50 @@ export function createUI() {
   if (import.meta.env.DEV) {
     document.querySelector("#dev-panel").hidden = false;
   }
+
+  const devPanel = document.querySelector("#dev-panel");
+  const cameraToolsButton = document.querySelector("#toggle-camera-tools");
+  cameraToolsButton.hidden = !import.meta.env.DEV;
+  cameraToolsButton.onclick = () => {
+    const open = devPanel.hidden || !devPanel.open;
+    devPanel.hidden = false;
+    devPanel.open = open;
+    if (open) devPanel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+  devPanel.addEventListener("toggle", () => {
+    cameraToolsButton.setAttribute("aria-expanded", String(devPanel.open));
+  });
+
+  const overlaysButton = document.querySelector("#toggle-viewer-overlays");
+  let overlaysHidden = false;
+  const previousVisibility = new Map();
+  function toggleViewerOverlays() {
+    overlaysHidden = !overlaysHidden;
+    const overlays = document.querySelectorAll("#viewer .scene-tools, #viewer #status, #viewer .reset");
+    overlays.forEach((element) => {
+      if (overlaysHidden) {
+        previousVisibility.set(element, {
+          value: element.style.getPropertyValue("visibility"),
+          priority: element.style.getPropertyPriority("visibility"),
+        });
+        element.style.setProperty("visibility", "hidden", "important");
+      } else {
+        const previous = previousVisibility.get(element);
+        if (previous?.value) element.style.setProperty("visibility", previous.value, previous.priority);
+        else element.style.removeProperty("visibility");
+      }
+    });
+    overlaysButton.textContent = overlaysHidden ? "Show viewer controls" : "Hide viewer controls";
+    overlaysButton.setAttribute("aria-pressed", String(overlaysHidden));
+  }
+  overlaysButton.onclick = toggleViewerOverlays;
+  overlaysButton.title = "Hide or show overlays (H). Also works in fullscreen.";
+  window.addEventListener("keydown", (event) => {
+    const editing = event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable]");
+    if (event.key.toLowerCase() !== "h" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || editing) return;
+    event.preventDefault();
+    toggleViewerOverlays();
+  });
 
   document.querySelector("#fov").oninput = (event) => {
     const value = Number(event.target.value);

@@ -26,6 +26,22 @@ let framingBounds = null;
 let autoFrame = true;
 // Fraction of the viewer available to full-car preset framing.
 const framingFill = 1.9;
+const bottomFramePadding = 5;
+const fullCarZoomRatio = 0.7; // Allow 10% closer than the fitted preset.
+let closeupMinDistance = 0.1;
+
+function setNavigationLimits(view = capture()) {
+  const tire = activeView === "Tire";
+  controls.enablePan = tire;
+  const distance = new THREE.Vector3(...view.position)
+    .distanceTo(new THREE.Vector3(...view.target));
+  controls.minDistance = tire ? closeupMinDistance
+    : Math.max(
+    closeupMinDistance,
+    distance * (activeView === "Top" ? 0.35 : fullCarZoomRatio)
+  );
+}
+
 
 function fitView(view, aspect = camera.aspect) {
   if (!framingBounds || !view) return view;
@@ -38,6 +54,8 @@ function fitView(view, aspect = camera.aspect) {
   const fill = view.fill ?? framingFill;
   const tanY = Math.tan(THREE.MathUtils.degToRad(view.fov) / 2) * fill;
   const tanX = tanY * aspect;
+  const bottomFraction = 1 - 2 * Math.min(bottomFramePadding / Math.max(viewer.clientHeight, 1), 0.25);
+  const bottomTan = Math.tan(THREE.MathUtils.degToRad(view.fov) / 2) * bottomFraction;
   // Side can fit closer than its original preset distance.
   let distance = view.fitToBounds
     ? camera.near * 2
@@ -51,6 +69,7 @@ function fitView(view, aspect = camera.aspect) {
           distance,
           depthOffset + Math.abs(offset.dot(right)) / tanX,
           depthOffset + Math.abs(offset.dot(up)) / tanY,
+          depthOffset + Math.max(0, -offset.dot(up)) / bottomTan,
           depthOffset + camera.near * 2,
         );
       }
@@ -63,6 +82,7 @@ function fitView(view, aspect = camera.aspect) {
 }
 
 function applyView(view) {
+  setNavigationLimits(view);
   camera.position.fromArray(view.position);
   controls.target.fromArray(view.target);
   camera.fov = view.fov;
@@ -102,7 +122,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 viewer.prepend(renderer.domElement);
 
-// Depth of field: used only for Tire view after its transition.
+// Depth of field fades in near the car in any camera view.
 // Antialiasing for views that use postprocessing.
 const renderTarget = new THREE.WebGLRenderTarget(
   viewer.clientWidth,
@@ -156,34 +176,145 @@ let activeView = "Overview";
 
 const dofSettings = {
   enabled: true,
+  autoFocus: true,
+  nearDistance: 1.5, // Full effect this far from the car bounds.
+  farDistance: 5.0, // No blur beyond this distance.
   focus: 0.96,
   aperture: 0.003,
   maxblur: 0.008,
 };
 
-// HDR environment
-const hdriURL = `${import.meta.env.BASE_URL}hdri/studio.hdr`;
+let dofModel = null;
+let dofAmount = 0;
+let dofFocusTarget = dofSettings.focus;
+let dofLastTime = performance.now();
+let dofLastFocusTime = -Infinity;
+let dofNeedsRefocus = true;
+const dofRay = new THREE.Raycaster();
+const dofCenter = new THREE.Vector2(0, 0);
+const dofPoint = new THREE.Vector3();
 
-new HDRLoader().load(
-  hdriURL,
-  (texture) => {
+function updateDistanceDof(now) {
+  const dt = Math.min((now - dofLastTime) / 1000, 0.1);
+  dofLastTime = now;
+  if (transition) {
+    dofAmount = 0;
+    dofNeedsRefocus = true;
+    dofLastFocusTime = -Infinity;
+    bokeh.enabled = false;
+    bokeh.uniforms.aperture.value = 0;
+    bokeh.uniforms.maxblur.value = 0;
+    return;
+  }
+  const distance = framingBounds ? framingBounds.distanceToPoint(camera.position) : Infinity;
+  const strength = dofSettings.enabled && framingBounds
+    ? 1 - THREE.MathUtils.smoothstep(distance, dofSettings.nearDistance, dofSettings.farDistance)
+    : 0;
+  const blend = 1 - Math.exp(-dt / 0.22);
+  dofAmount += (strength - dofAmount) * blend;
+  if (dofSettings.autoFocus && dofModel && (dofNeedsRefocus || (dofAmount > 0.001 && now - dofLastFocusTime > 120))) {
+    camera.updateMatrixWorld();
+    dofRay.setFromCamera(dofCenter, camera);
+    const hit = dofRay.intersectObject(dofModel, true).find((entry) => {
+      for (let object = entry.object; object; object = object.parent) {
+        if (!object.visible) return false;
+      }
+      return true;
+    });
+    // Focus on the car under the center of the viewer; use the orbit target if missed.
+    dofPoint.copy(hit ? hit.point : controls.target).applyMatrix4(camera.matrixWorldInverse);
+    dofFocusTarget = Math.max(camera.near, -dofPoint.z);
+    dofLastFocusTime = now;
+  }
+  if (!dofSettings.autoFocus) dofFocusTarget = dofSettings.focus;
+  if (dofNeedsRefocus) {
+    bokeh.uniforms.focus.value = dofFocusTarget;
+    dofNeedsRefocus = false;
+    dofAmount = 0;
+  } else {
+    bokeh.uniforms.focus.value += (dofFocusTarget - bokeh.uniforms.focus.value) * blend;
+  }
+  bokeh.uniforms.aperture.value = dofSettings.aperture * dofAmount;
+  bokeh.uniforms.maxblur.value = dofSettings.maxblur * dofAmount;
+  bokeh.enabled = dofAmount > 0.001;
+}
+
+// HDR environment — add filenames here when you add more HDRs to public/hdri.
+const hdriFiles = ["studio.hdr", "studio_01.hdr", "studio_02.hdr", "studio_03.hdr", "studio_04.hdr", "studio_05.hdr"];
+const hdriStorageKey = "porsche-configurator-hdri";
+const hdriLoader = new HDRLoader();
+let hdriRequest = 0;
+let activeHdri = "";
+
+const hdriLabel = document.createElement("label");
+hdriLabel.textContent = "HDR environment";
+const hdriSelect = document.createElement("select");
+hdriSelect.id = "hdri-select";
+hdriLabel.htmlFor = hdriSelect.id;
+for (const filename of hdriFiles) {
+  const option = document.createElement("option");
+  option.value = filename;
+  option.textContent = filename === "studio.hdr"
+    ? "Original studio"
+    : filename.replace(/\.hdr$/i, "").replace("studio_", "Studio ");
+  hdriSelect.append(option);
+}
+hdriLabel.append(hdriSelect);
+const hdriMessage = document.createElement("small");
+hdriMessage.setAttribute("role", "status");
+hdriMessage.style.display = "block";
+hdriMessage.style.marginTop = "4px";
+hdriLabel.append(hdriMessage);
+// Keep environment selection beside the camera developer settings.
+const hdriControls = document.querySelector("#dev-panel .dev-content");
+hdriLabel.style.gridColumn = "1 / -1";
+hdriControls.insertBefore(hdriLabel, document.querySelector("#dev-fine-adjustments"));
+
+async function selectHdri(filename, allowFallback = false) {
+  if (!hdriFiles.includes(filename)) return;
+  const request = ++hdriRequest;
+  hdriSelect.value = filename;
+  hdriMessage.textContent = "Loading environment…";
+  hdriSelect.setAttribute("aria-busy", "true");
+  try {
+    const texture = await hdriLoader.loadAsync(
+      `${import.meta.env.BASE_URL}hdri/${filename}`,
+    );
+    // A slower previous request must never replace the latest selection.
+    if (request !== hdriRequest) {
+      texture.dispose();
+      return;
+    }
     texture.mapping = THREE.EquirectangularReflectionMapping;
-
+    const previous = panorama;
     scene.environment = texture;
     panorama = texture;
-
-    if (backgroundMode === "panorama") {
-      scene.background = texture;
-    }
-
+    if (backgroundMode === "panorama") scene.background = texture;
     scene.backgroundIntensity = timeOfDay === "night" ? 0.12 : 0.3;
     scene.backgroundBlurriness = 0.1;
-  },
-  undefined,
-  (error) => {
-    console.error("HDR environment failed to load:", error);
-  },
-);
+    activeHdri = filename;
+    try { localStorage.setItem(hdriStorageKey, filename); } catch {}
+    previous?.dispose();
+    hdriMessage.textContent = "";
+  } catch (error) {
+    if (request !== hdriRequest) return;
+    console.error(`HDR environment failed to load: ${filename}`, error);
+    if (allowFallback && filename !== "studio.hdr") {
+      return selectHdri("studio.hdr");
+    }
+    hdriSelect.value = activeHdri;
+    hdriMessage.textContent = `Could not load ${filename}. Check public/hdri/.`;
+  } finally {
+    if (request === hdriRequest) hdriSelect.removeAttribute("aria-busy");
+  }
+}
+hdriSelect.addEventListener("change", () => selectHdri(hdriSelect.value));
+let initialHdri = "studio.hdr";
+try {
+  const saved = localStorage.getItem(hdriStorageKey);
+  if (hdriFiles.includes(saved)) initialHdri = saved;
+} catch {}
+void selectHdri(initialHdri, true);
 
 // Directional light
 const sun = new THREE.DirectionalLight(0xffffff, 3);
@@ -208,6 +339,69 @@ scene.add(sun.target);
 // Mouse and touch controls
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+
+// Input sensitivity ramps gently, then stays at the configured maximum.
+const navigationFeel = {
+  rotateStart: 0.12,
+  rotateMax: 0.40,
+  zoomStart: 0.05,
+  zoomMax: 0.18,
+  rampDuration: 550, // Milliseconds of continuous movement to reach full speed.
+  pauseReset: 200, // Restart gently after a pause.
+};
+installNavigationRamp(controls, renderer.domElement, navigationFeel);
+
+function installNavigationRamp(orbit, element, settings) {
+  const pointers = new Set();
+  const drag = { start: null, last: null };
+  const wheel = { start: null, last: null, direction: 0 };
+  const reset = (state) => { state.start = null; state.last = null; };
+  function progress(state, now) {
+    if (state.last === null || now - state.last > settings.pauseReset) {
+      state.start = now;
+    }
+    state.last = now;
+    const t = Math.min(1, Math.max(0, (now - state.start) / settings.rampDuration));
+    return t * t * (3 - 2 * t);
+  }
+  function setDragSpeed(amount) {
+    orbit.rotateSpeed = settings.rotateStart + (settings.rotateMax - settings.rotateStart) * amount;
+    orbit.zoomSpeed = settings.zoomStart + (settings.zoomMax - settings.zoomStart) * amount;
+  }
+  setDragSpeed(0);
+  // Capture listeners run before OrbitControls consumes each input event.
+  element.addEventListener("pointerdown", (event) => {
+    pointers.add(event.pointerId);
+    reset(drag);
+    setDragSpeed(0);
+  }, { capture: true });
+  element.addEventListener("pointermove", (event) => {
+    if (!orbit.enabled || !pointers.has(event.pointerId)) return;
+    setDragSpeed(progress(drag, performance.now()));
+  }, { capture: true });
+  function endPointer(event) {
+    pointers.delete(event.pointerId);
+    reset(drag);
+    setDragSpeed(0);
+  }
+  window.addEventListener("pointerup", endPointer, { capture: true });
+  window.addEventListener("pointercancel", endPointer, { capture: true });
+  window.addEventListener("blur", () => {
+    pointers.clear();
+    reset(drag);
+    reset(wheel);
+    setDragSpeed(0);
+  });
+  element.addEventListener("wheel", (event) => {
+    if (!orbit.enabled || !orbit.enableZoom || event.deltaY === 0) return;
+    const direction = Math.sign(event.deltaY);
+    if (direction !== wheel.direction) reset(wheel);
+    wheel.direction = direction;
+    const amount = progress(wheel, performance.now());
+    orbit.zoomSpeed = settings.zoomStart + (settings.zoomMax - settings.zoomStart) * amount;
+  }, { capture: true, passive: true });
+}
+
 
 // Elastic lower orbit limit. Angles are measured down from the top.
 const elasticOrbitSettings = {
@@ -317,6 +511,8 @@ function moveTo(view) {
   controls.autoRotate = false;
   ui.syncAutoRotate(false);
 
+  controls.minDistance = closeupMinDistance;
+  controls.enablePan = activeView === "Tire";
   controls.enableDamping = false;
   controls.update();
 
@@ -331,6 +527,7 @@ controls.addEventListener("start", () => {
   autoFrame = false;
   controls.autoRotate = false;
   ui.syncAutoRotate(false);
+  if (transition) setNavigationLimits(transition.to);
   transition = null;
   controls.enableDamping = true;
   ui.manualView();
@@ -364,7 +561,7 @@ ui.connect({
   dof(key, value) {
     dofSettings[key] = value;
 
-    if (key !== "enabled") {
+    if (["focus", "aperture", "maxblur"].includes(key)) {
       bokeh.uniforms[key].value = value;
     }
   },
@@ -435,6 +632,7 @@ loader.load(
   (gltf) => {
     const model = new THREE.Group();
     model.add(gltf.scene);
+    dofModel = model;
     scene.add(model);
 
     // Normalize the car to four units along its longest side.
@@ -732,7 +930,8 @@ loader.load(
     camera.updateProjectionMatrix();
 
     controls.target.set(0, 0, 0);
-    controls.minDistance = sphere.radius * 0.3;
+    closeupMinDistance = sphere.radius * 0.3;
+    controls.minDistance = closeupMinDistance;
     controls.maxDistance = distance * 4;
 
     // Your Overview pan offset
@@ -749,7 +948,11 @@ loader.load(
     controls.update();
     controls.saveState();
 
-    overview = capture();
+    overview = {
+      position: [3.02329848713231, 3.574898561450694e-16, 5.115875094560762],
+      target: [-0.1386750490563073, 0, 0.20801257358446093],
+      fov: 20,
+    };
 
     // Camera presets
     const viewDistance = distance * 0.75;
@@ -760,7 +963,7 @@ loader.load(
         .multiplyScalar(viewDistance)
         .toArray(),
       target: [0, 0, 0],
-      fov: 50,
+      fov: 20,
     });
 
     presets = {
@@ -904,6 +1107,7 @@ renderer.setAnimationLoop(() => {
     ui.syncFov(camera.fov);
 
     if (t === 1) {
+      setNavigationLimits(transition.to);
       transition = null;
       controls.enableDamping = true;
     }
@@ -913,6 +1117,6 @@ renderer.setAnimationLoop(() => {
 
   // Keep lighting, transparent blending and output conversion consistent
   // in every view. Only the blur pass changes when DOF is toggled.
-  bokeh.enabled = activeView === "Tire" && dofSettings.enabled && !transition;
+  updateDistanceDof(performance.now());
   composer.render();
 });
