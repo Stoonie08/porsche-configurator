@@ -505,6 +505,59 @@ function capture() {
   };
 }
 
+// Orbit between views, adding distance only where the car requires clearance.
+const viewTransitionSettings = {
+  duration: 1200, // milliseconds
+  clearance: 0.04, // fraction of the car's longest dimension
+};
+
+function createViewTransition(from, to) {
+  const center = framingBounds
+    ? framingBounds.getCenter(new THREE.Vector3())
+    : new THREE.Vector3();
+  const startPosition = new THREE.Vector3(...from.position);
+  const endPosition = new THREE.Vector3(...to.position);
+  const startOffset = startPosition.clone().sub(center);
+  const endOffset = endPosition.clone().sub(center);
+  const a = new THREE.Spherical().setFromVector3(startOffset);
+  const b = new THREE.Spherical().setFromVector3(endOffset);
+  // At the top pole, retain the other view's azimuth to avoid a needless spin.
+  if (Math.sin(a.phi) < 0.0001) a.theta = b.theta;
+  if (Math.sin(b.phi) < 0.0001) b.theta = a.theta;
+  const thetaDelta = Math.atan2(Math.sin(b.theta - a.theta), Math.cos(b.theta - a.theta));
+  const halfSize = framingBounds
+    ? framingBounds.getSize(new THREE.Vector3()).multiplyScalar(0.5)
+    : new THREE.Vector3();
+  const padding = Math.max(halfSize.x, halfSize.y, halfSize.z) * 2
+    * viewTransitionSettings.clearance + camera.near * 2;
+  return { from, to, center, a, b, thetaDelta, halfSize, padding,
+    start: performance.now() };
+}
+
+function sampleViewTransition(path, t) {
+  // Preserve the exact endpoints, including close-up framing.
+  if (t <= 0) return new THREE.Vector3(...path.from.position);
+  if (t >= 1) return new THREE.Vector3(...path.to.position);
+  const k = t * t * (3 - 2 * t);
+  const phi = THREE.MathUtils.lerp(path.a.phi, path.b.phi, k);
+  const theta = path.a.theta + path.thetaDelta * k;
+  const direction = new THREE.Vector3().setFromSpherical(new THREE.Spherical(1, phi, theta));
+  // Distance from the center to the box surface along this direction.
+  let surfaceRadius = Infinity;
+  for (const axis of ["x", "y", "z"]) {
+    if (Math.abs(direction[axis]) > 1e-8) {
+      surfaceRadius = Math.min(surfaceRadius,
+        path.halfSize[axis] / Math.abs(direction[axis]));
+    }
+  }
+  if (!Number.isFinite(surfaceRadius)) surfaceRadius = 0;
+  const desiredRadius = THREE.MathUtils.lerp(path.a.radius, path.b.radius, k);
+  // Fade clearance at the ends so close-up presets do not jump.
+  const margin = path.padding * Math.sin(Math.PI * k);
+  const radius = Math.max(desiredRadius, surfaceRadius + margin);
+  return direction.multiplyScalar(radius).add(path.center);
+}
+
 function moveTo(view) {
   if (!view) return;
   elasticOrbit.cancel();
@@ -516,11 +569,7 @@ function moveTo(view) {
   controls.enableDamping = false;
   controls.update();
 
-  transition = {
-    from: capture(),
-    to: view,
-    start: performance.now(),
-  };
+  transition = createViewTransition(capture(), view);
 }
 
 controls.addEventListener("start", () => {
@@ -1068,7 +1117,7 @@ new ResizeObserver(() => {
   if (autoFrame && presets[activeView]) {
     const fitted = fitView(presets[activeView]);
     if (transition) {
-      transition = { from: capture(), to: fitted, start: performance.now() };
+      transition = createViewTransition(capture(), fitted);
     } else {
       const damping = controls.enableDamping;
       controls.enableDamping = false;
@@ -1081,15 +1130,11 @@ new ResizeObserver(() => {
 // Render loop
 renderer.setAnimationLoop(() => {
   if (transition) {
-    const t = Math.min((performance.now() - transition.start) / 700, 1);
+    const t = Math.min((performance.now() - transition.start) / viewTransitionSettings.duration, 1);
 
     const k = t * t * (3 - 2 * t);
 
-    camera.position.lerpVectors(
-      new THREE.Vector3(...transition.from.position),
-      new THREE.Vector3(...transition.to.position),
-      k,
-    );
+    camera.position.copy(sampleViewTransition(transition, t));
 
     controls.target.lerpVectors(
       new THREE.Vector3(...transition.from.target),
@@ -1103,6 +1148,7 @@ renderer.setAnimationLoop(() => {
       k,
     );
 
+    camera.lookAt(controls.target);
     camera.updateProjectionMatrix();
     ui.syncFov(camera.fov);
 
@@ -1113,7 +1159,8 @@ renderer.setAnimationLoop(() => {
     }
   }
 
-  controls.update();
+  // OrbitControls constraints apply to interaction, not the exterior travel path.
+  if (!transition) controls.update();
 
   // Keep lighting, transparent blending and output conversion consistent
   // in every view. Only the blur pass changes when DOF is toggled.
