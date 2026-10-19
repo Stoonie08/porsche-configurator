@@ -867,3 +867,125 @@ dialog::backdrop {
     transition: none;
   }
 }
+
+/* Site theme: scene lighting and paint colors remain independent. */
+:root { color-scheme: light; }
+.site-theme-control {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12px; white-space: nowrap;
+}
+.site-theme-control select {
+  padding: 9px 28px 9px 10px; border: 1px solid #d5d8da;
+  border-radius: 7px; background: #fff; color: #181b1d;
+  font: inherit; cursor: pointer;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --option-border: #4a4d52;
+  --option-selected: #d7dce0;
+  --theme-page: #141518;
+  --theme-panel: #202226;
+  --theme-control: #2b2e33;
+  --theme-text: #f0f1f2;
+  --theme-muted: #b2b6bc;
+  --theme-border: #41454b;
+}
+html[data-theme="dark"] body {
+  background: var(--theme-page); color: var(--theme-text);
+}
+html[data-theme="dark"] header.porsche-site-header {
+  background: var(--theme-panel); color: var(--theme-text);
+  border-color: var(--theme-border);
+}
+/* Keep the supplied JPEG's colors intact on its white backing. */
+html[data-theme="dark"] .header-porsche-logo { border-radius: 8px; }
+html[data-theme="dark"] :is(.option-section, #views, #summary-dialog, #dev-panel) {
+  background: var(--theme-panel); color: var(--theme-text);
+  border-color: var(--theme-border);
+}
+html[data-theme="dark"] .build-summary { border-color: var(--theme-border); }
+html[data-theme="dark"] :is(.option-section:hover, .option-section:focus-within, .option-section[open], #views:hover, #views:focus-within) {
+  border-color: #686e77; box-shadow: 0 8px 24px #0004;
+}
+html[data-theme="dark"] :is(.toolbar button, .build-summary button, #summary-dialog button, #dev-panel button, .option-card, .site-theme-control select) {
+  background: var(--theme-control); color: var(--theme-text); border-color: var(--theme-border);
+}
+html[data-theme="dark"] :is(.toolbar button, .build-summary button, #summary-dialog button, #dev-panel button, .option-card):hover {
+  background: #383c42;
+}
+html[data-theme="dark"] :is(.toolbar, .build-summary, #summary-dialog) .primary {
+  background: #e4e7eb; color: #17191c; border-color: #e4e7eb;
+}
+html[data-theme="dark"] :is(.toolbar, .build-summary, #summary-dialog) .primary:hover { background: #fff; }
+html[data-theme="dark"] :is(.brand span, .project-tag, .muted, .viewer-caption, .eyebrow, .subtitle, .group-label, .study-note, dt, .option-card small, .option-section > summary span, .options .note, #summary-dialog .note, #dev-panel .note, #dev-panel .dev-content p) {
+  color: var(--theme-muted);
+}
+html[data-theme="dark"] .dev-content input:not([type="range"]):not([type="checkbox"]),
+html[data-theme="dark"] .dev-content select {
+  background: var(--theme-control); color: var(--theme-text); border-color: var(--theme-border);
+}
+html[data-theme="dark"] #dev-panel :is(.scene-advanced, #dof-controls) { border-color: var(--theme-border); }
+html[data-theme="dark"] .option-card svg { background: #292d31; stroke: #c5ced0; }
+html[data-theme="dark"] .option-card[aria-pressed="true"] {
+  border-color: var(--option-selected); box-shadow: inset 0 0 0 1px var(--option-selected);
+}
+html[data-theme="dark"] #paint-swatches .swatch { box-shadow: inset 0 0 0 4px var(--theme-panel); }
+html[data-theme="dark"] #paint-swatches .swatch[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 1px var(--option-selected), inset 0 0 0 5px var(--theme-panel);
+}
+html[data-theme="dark"] :is(button, summary, a, input, select):focus-visible {
+  outline-color: #a9d8c8;
+}
+
+/* Authored logo masks replace all automatic keying and outline filters. */
+header .header-porsche-logo {
+  position: relative; display: block; background: transparent;
+  border-radius: 0; filter: none; color: #181b1d;
+}
+.header-porsche-crest {
+  display: block; width: 100%; height: auto;
+  -webkit-mask-image: var(--header-crest-mask);
+  mask-image: var(--header-crest-mask);
+}
+.header-porsche-wordmark {
+  position: absolute; inset: 0; display: block; background: currentColor;
+  -webkit-mask-image: var(--porsche-wordmark-mask);
+  mask-image: var(--porsche-wordmark-mask);
+}
+.porsche-loading-header-logo {
+  -webkit-mask-image: var(--loading-crest-mask);
+  mask-image: var(--loading-crest-mask);
+  filter: none; clip-path: none;
+}
+.porsche-loading-wordmark img {
+  -webkit-mask-image: var(--porsche-wordmark-mask);
+  mask-image: var(--porsche-wordmark-mask);
+}
+.porsche-loading-model-logo {
+  -webkit-mask-image: var(--turbo-wordmark-mask);
+  mask-image: var(--turbo-wordmark-mask);
+}
+.header-porsche-crest, .header-porsche-wordmark,
+.porsche-loading-header-logo, .porsche-loading-wordmark img,
+.porsche-loading-model-logo {
+  mask-mode: luminance;
+  -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+}
+html[data-theme="dark"] header .header-porsche-logo {
+  color: #f0f1f2; background: transparent; border-radius: 0; filter: none;
+}
+html[data-theme="dark"] .porsche-loading-screen {
+  background: #141518; color: #f0f1f2; color-scheme: dark;
+}
+html[data-theme="dark"] .porsche-loading-header-logo { filter: none; clip-path: none; }
+html[data-theme="dark"] .porsche-loading-wordmark img,
+html[data-theme="dark"] .porsche-loading-model-logo {
+  filter: invert(1); mix-blend-mode: normal;
+}
+html[data-theme="dark"] .porsche-loading-pulse span { background: #f0f1f2; }
+html[data-theme="dark"] .porsche-loading-detail { color: #b2b6bc; }
+html[data-theme="dark"] .porsche-loading-actions button {
+  background: #2b2e33; color: #f0f1f2; border-color: #41454b;
+}

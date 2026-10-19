@@ -1,11 +1,17 @@
 import "./style.css";
+import "./header-logo.css";
+import { bindThemeSelector } from "./theme.js";
 
 export function createUI() {
   document.querySelector("#app").innerHTML = `
-    <header>
+    <header class="porsche-site-header">
       <a class="brand" href="#">
         STONEY JIMENEZ <span>/ CONFIGURATOR</span>
       </a>
+      <div class="header-porsche-logo" role="img" aria-label="Porsche">
+        <img class="header-porsche-crest" src="${import.meta.env.BASE_URL}branding/porsche-logo-loading_screen-01.jpg" alt="" width="1000" height="352">
+        <span class="header-porsche-wordmark" aria-hidden="true"></span>
+      </div>
       <span class="project-tag">INTERACTIVE STUDY · 01</span>
     </header>
 
@@ -15,6 +21,13 @@ export function createUI() {
       </span>
 
       <div>
+        <label class="site-theme-control" for="site-theme">Theme
+          <select id="site-theme" aria-label="Site color theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
         <button id="toggle-viewer-overlays" type="button" aria-pressed="false">Hide viewer controls</button>
         <button id="toggle-camera-tools" type="button" aria-expanded="false" aria-controls="dev-panel">Camera tools</button>
         <button id="save-config">Save configuration</button>
@@ -388,12 +401,7 @@ export function createUI() {
     button.title = name;
     button.setAttribute("aria-label", name);
 
-    button.innerHTML = `
-      <span class="paint-chip"></span>
-      <span></span>
-    `;
-
-    button.lastElementChild.textContent = name;
+    button.innerHTML = '<span class="paint-chip" aria-hidden="true"></span>';
 
     button.onclick = () => {
       actions.paint(name === "Original" ? null : color);
@@ -487,7 +495,9 @@ export function createUI() {
   });
 
   // Camera buttons
-  const viewNames = ["Overview", "Rear", "Side", "Tire", "Front", "Top"];
+  const viewNames = ["Overview", "Rear", "Side", "Tire", "Front", "Top", "Dashboard", "Front Seats", "Back Seats"];
+
+  const interiorThumbnails = { Dashboard: "dash.png", "Front Seats": "seats.png", "Back Seats": "backSeats.png" };
 
   viewNames.forEach((name, index) => {
     const button = document.createElement("button");
@@ -496,10 +506,12 @@ export function createUI() {
     button.className = "view-button";
 
     button.innerHTML = `
-      <img class="view-thumbnail" src="${import.meta.env.BASE_URL}views/${name}.png" alt="" draggable="false">
+      <img class="view-thumbnail" src="${import.meta.env.BASE_URL}views/${interiorThumbnails[name] || `${name}.png`}" alt="" draggable="false">
       <span>${name}</span>
     `;
 
+    button.setAttribute("aria-label", name + " view");
+    button.title = name + " view";
     button.setAttribute("aria-pressed", String(index === 0));
 
     button.onclick = () => {
@@ -823,6 +835,8 @@ export function createUI() {
 
   refresh();
   refreshSaved();
+
+  bindThemeSelector(document.querySelector("#site-theme"));
 
   return {
     viewer: document.querySelector("#viewer"),

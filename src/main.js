@@ -6,12 +6,20 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { createUI } from "./ui.js";
+import { createDoorControls } from "./door_controls.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
+
+import { createLoadingScreen } from "./loading-screen.js";
 
 // Interface
 const ui = createUI();
+const loadingScreen = createLoadingScreen();
+let modelReadyForReveal = false;
 const viewer = ui.viewer;
 const status = ui.status;
+
+let doorControls = null;
+let previousFrameTime = null;
 
 let panorama = null;
 let backgroundMode = "studio";
@@ -22,6 +30,7 @@ let overview = null;
 let transition = null;
 let presets = {};
 let contactShadowPlane = null;
+let baseShadowPlane = null;
 let framingBounds = null;
 let autoFrame = true;
 // Fraction of the viewer available to full-car preset framing.
@@ -29,12 +38,117 @@ const framingFill = 1.9;
 const bottomFramePadding = 5;
 const fullCarZoomRatio = 0.7; // Allow 10% closer than the fitted preset.
 let closeupMinDistance = 0.1;
+let navigationInterior = false;
+const interiorRotationSettings = { horizontalDegrees: 20, verticalDegrees: 10, speedMultiplier: 0.25, softZoneFraction: 0.4, minimumSpeed: 0.04 };
+let interiorRotationBounds = null;
+// Slow only movement toward a nearby limit; moving away stays responsive.
+function interiorEdgeFactor(remaining, halfRange) {
+  const zone = halfRange * interiorRotationSettings.softZoneFraction;
+  const t = Math.max(0, Math.min(1, remaining / Math.max(zone, 1e-6)));
+  const ease = t * t * (3 - 2 * t);
+  return interiorRotationSettings.minimumSpeed + (1 - interiorRotationSettings.minimumSpeed) * ease;
+}
+function softenInteriorRotation(before, after) {
+  const bounds = interiorRotationBounds;
+  if (!bounds) return after;
+  const delta = Math.atan2(Math.sin(after.theta - before.theta), Math.cos(after.theta - before.theta));
+  if (Math.abs(delta) > 1e-10) {
+    const raw = delta > 0 ? bounds.maxAzimuthAngle - before.theta : before.theta - bounds.minAzimuthAngle;
+    let remaining = ((raw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    if (remaining > 2 * Math.PI - 1e-8) remaining = 0;
+    after.theta = before.theta + delta * interiorEdgeFactor(remaining,
+      THREE.MathUtils.degToRad(interiorRotationSettings.horizontalDegrees));
+  }
+  const verticalDelta = after.phi - before.phi;
+  if (Math.abs(verticalDelta) > 1e-10) {
+    const remaining = verticalDelta > 0 ? bounds.maxPolarAngle - before.phi : before.phi - bounds.minPolarAngle;
+    after.phi = before.phi + verticalDelta * interiorEdgeFactor(remaining,
+      THREE.MathUtils.degToRad(interiorRotationSettings.verticalDegrees));
+  }
+  return after;
+}
+function applyInteriorRotationLimits(orbit) {
+  if (!interiorRotationBounds) return;
+  Object.assign(orbit, interiorRotationBounds);
+}
+let exteriorMaxDistance = Infinity;
+// Zoom distance relative to each interior preset's camera-to-target distance.
+const interiorZoomLimits = { minRatio: 0.8, maxRatio: 1.1 };
+const interiorZoomSpeedMultiplier = 0.5; // Half the exterior zoom speed.
+const interiorPresets = {
+  "Dashboard": {
+    "position": [
+      -0.006235648484242179,
+      0.41820563528787347,
+      -0.600186977961745
+    ],
+    "target": [
+      -0.0015427916787213124,
+      -0.09814037780798332,
+      0.7135536370951556
+    ],
+    "fov": 50,
+    "interior": true
+  },
+  "Front Seats": {
+    "position": [
+      0.4905623024777581,
+      0.357882729616592,
+      0.29700445234288975
+    ],
+    "target": [
+      -0.2174849227610884,
+      -0.09814037780798317,
+      -0.7109732181110985
+    ],
+    "fov": 50,
+    "interior": true
+  },
+  "Back Seats": {
+    "position": [
+      0.4177031713576298,
+      0.26266604104892577,
+      -0.8492217672581995
+    ],
+    "target": [
+      -0.3788262806028835,
+      -0.09814037780798357,
+      -0.5316741718529071
+    ],
+    "fov": 50,
+    "interior": true
+  }
+};
 
 function setNavigationLimits(view = capture()) {
-  const tire = activeView === "Tire";
+  navigationInterior = Boolean(view.interior);
+  const tire = activeView === "Tire" && !navigationInterior;
   controls.enablePan = tire;
   const distance = new THREE.Vector3(...view.position)
     .distanceTo(new THREE.Vector3(...view.target));
+  if (navigationInterior) {
+    const offset = new THREE.Vector3(...view.position).sub(new THREE.Vector3(...view.target));
+    const spherical = new THREE.Spherical().setFromVector3(offset);
+    const horizontal = THREE.MathUtils.degToRad(interiorRotationSettings.horizontalDegrees);
+    const vertical = THREE.MathUtils.degToRad(interiorRotationSettings.verticalDegrees);
+    const wrap = angle => Math.atan2(Math.sin(angle), Math.cos(angle));
+    interiorRotationBounds = {
+      minAzimuthAngle: wrap(spherical.theta - horizontal),
+      maxAzimuthAngle: wrap(spherical.theta + horizontal),
+      minPolarAngle: Math.max(0.01, spherical.phi - vertical),
+      maxPolarAngle: Math.min(Math.PI - 0.01, spherical.phi + vertical),
+    };
+    applyInteriorRotationLimits(controls);
+    controls.minDistance = Math.max(camera.near * 2, distance * interiorZoomLimits.minRatio);
+    controls.maxDistance = Math.max(controls.minDistance, distance * interiorZoomLimits.maxRatio);
+    return;
+  }
+  interiorRotationBounds = null;
+  controls.minAzimuthAngle = -Infinity;
+  controls.maxAzimuthAngle = Infinity;
+  controls.minPolarAngle = 0;
+  controls.maxPolarAngle = Math.PI;
+  controls.maxDistance = exteriorMaxDistance;
   controls.minDistance = tire ? closeupMinDistance
     : Math.max(
     closeupMinDistance,
@@ -44,7 +158,7 @@ function setNavigationLimits(view = capture()) {
 
 
 function fitView(view, aspect = camera.aspect) {
-  if (!framingBounds || !view) return view;
+  if (!framingBounds || !view || view.interior) return view;
   const target = new THREE.Vector3(...view.target);
   const position = new THREE.Vector3(...view.position);
   const backward = position.clone().sub(target).normalize();
@@ -153,11 +267,13 @@ bokeh.render = (renderer, writeBuffer, readBuffer, ...args) => {
   const autoUpdate = renderer.shadowMap.autoUpdate;
   const needsUpdate = renderer.shadowMap.needsUpdate;
   const contactVisible = contactShadowPlane?.visible;
+  const baseVisible = baseShadowPlane?.visible;
   const overrideMaterial = scene.overrideMaterial;
 
   renderer.shadowMap.autoUpdate = false;
   renderer.shadowMap.needsUpdate = false;
   if (contactShadowPlane) contactShadowPlane.visible = false;
+  if (baseShadowPlane) baseShadowPlane.visible = false;
 
   try {
     renderBokeh(renderer, writeBuffer, readBuffer, ...args);
@@ -166,6 +282,7 @@ bokeh.render = (renderer, writeBuffer, readBuffer, ...args) => {
     renderer.shadowMap.needsUpdate = needsUpdate;
     scene.overrideMaterial = overrideMaterial;
     if (contactShadowPlane) contactShadowPlane.visible = contactVisible;
+    if (baseShadowPlane) baseShadowPlane.visible = baseVisible;
   }
 };
 
@@ -321,7 +438,7 @@ const sun = new THREE.DirectionalLight(0xffffff, 3);
 
 sun.position.set(3, 6, 4);
 sun.castShadow = true;
-sun.shadow.intensity = 0.65;
+sun.shadow.intensity = 1;
 
 sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.left = -4;
@@ -365,8 +482,10 @@ function installNavigationRamp(orbit, element, settings) {
     return t * t * (3 - 2 * t);
   }
   function setDragSpeed(amount) {
-    orbit.rotateSpeed = settings.rotateStart + (settings.rotateMax - settings.rotateStart) * amount;
-    orbit.zoomSpeed = settings.zoomStart + (settings.zoomMax - settings.zoomStart) * amount;
+    orbit.rotateSpeed = (settings.rotateStart + (settings.rotateMax - settings.rotateStart) * amount)
+      * (navigationInterior ? interiorRotationSettings.speedMultiplier : 1);
+    orbit.zoomSpeed = (settings.zoomStart + (settings.zoomMax - settings.zoomStart) * amount)
+      * (navigationInterior ? interiorZoomSpeedMultiplier : 1);
   }
   setDragSpeed(0);
   // Capture listeners run before OrbitControls consumes each input event.
@@ -398,7 +517,8 @@ function installNavigationRamp(orbit, element, settings) {
     if (direction !== wheel.direction) reset(wheel);
     wheel.direction = direction;
     const amount = progress(wheel, performance.now());
-    orbit.zoomSpeed = settings.zoomStart + (settings.zoomMax - settings.zoomStart) * amount;
+    orbit.zoomSpeed = (settings.zoomStart + (settings.zoomMax - settings.zoomStart) * amount)
+      * (navigationInterior ? interiorZoomSpeedMultiplier : 1);
   }, { capture: true, passive: true });
 }
 
@@ -463,6 +583,20 @@ function installElasticOrbit(orbit, orbitCamera, settings) {
   // OrbitControls calls update for pointer input as well as each animation frame.
   // Wrap that single entry point so resistance is applied consistently.
   orbit.update = (...args) => {
+    if (navigationInterior) {
+      returning = null;
+      applyInteriorRotationLimits(orbit);
+      const before = new THREE.Spherical().setFromVector3(orbitCamera.position.clone().sub(orbit.target));
+      const changed = originalUpdate(...args);
+      if (!transition) {
+        const after = new THREE.Spherical().setFromVector3(orbitCamera.position.clone().sub(orbit.target));
+        softenInteriorRotation(before, after);
+        orbitCamera.position.copy(orbit.target).add(new THREE.Vector3().setFromSpherical(after));
+        orbitCamera.lookAt(orbit.target);
+        orbitCamera.updateMatrixWorld();
+      }
+      return changed;
+    }
     const before = readAngle();
     orbit.maxPolarAngle = dragging ? stop : start;
     const changed = originalUpdate(...args);
@@ -502,6 +636,7 @@ function capture() {
     position: camera.position.toArray(),
     target: controls.target.toArray(),
     fov: camera.fov,
+    interior: navigationInterior,
   };
 }
 
@@ -512,6 +647,7 @@ const viewTransitionSettings = {
 };
 
 function createViewTransition(from, to) {
+  if (from.interior && to.interior) return { from, to, direct: true, start: performance.now() };
   const center = framingBounds
     ? framingBounds.getCenter(new THREE.Vector3())
     : new THREE.Vector3();
@@ -539,6 +675,7 @@ function sampleViewTransition(path, t) {
   if (t <= 0) return new THREE.Vector3(...path.from.position);
   if (t >= 1) return new THREE.Vector3(...path.to.position);
   const k = t * t * (3 - 2 * t);
+  if (path.direct) return new THREE.Vector3(...path.from.position).lerp(new THREE.Vector3(...path.to.position), k);
   const phi = THREE.MathUtils.lerp(path.a.phi, path.b.phi, k);
   const theta = path.a.theta + path.thetaDelta * k;
   const direction = new THREE.Vector3().setFromSpherical(new THREE.Spherical(1, phi, theta));
@@ -564,8 +701,18 @@ function moveTo(view) {
   controls.autoRotate = false;
   ui.syncAutoRotate(false);
 
+  // Cut between cabin and exterior to avoid passing through the bodywork.
+  if (Boolean(view.interior) !== navigationInterior) {
+    transition = null;
+    controls.enableDamping = false;
+    controls.update();
+    applyView(view);
+    controls.enableDamping = true;
+    ui.syncFov(view.fov);
+    return;
+  }
   controls.minDistance = closeupMinDistance;
-  controls.enablePan = activeView === "Tire";
+  controls.enablePan = activeView === "Tire" && !view.interior;
   controls.enableDamping = false;
   controls.update();
 
@@ -596,7 +743,7 @@ ui.connect({
 
   view(name) {
     activeView = name;
-    autoFrame = name !== "Tire";
+    autoFrame = name !== "Tire" && !presets[name]?.interior;
     moveTo(autoFrame ? fitView(presets[name]) : presets[name]);
   },
 
@@ -604,7 +751,8 @@ ui.connect({
     autoFrame = false;
     activeView = view.name === "Tire" ? "Tire" : "Custom";
     ui.manualView();
-    moveTo(view);
+    const interior = view.interior ?? /^Interior[_ ]/i.test(view.name || '');
+    moveTo({ ...view, interior });
   },
 
   dof(key, value) {
@@ -691,6 +839,7 @@ loader.load(
 
     if (!Number.isFinite(longestSide) || longestSide <= 0) {
       status.textContent = "The model has no usable geometry bounds.";
+      loadingScreen.error(status.textContent);
       return;
     }
 
@@ -756,12 +905,59 @@ loader.load(
     ground.receiveShadow = true;
     scene.add(ground);
 
+    // Broad soft oval beneath the detailed contact shadow.
+    const baseShadowSettings = {
+      opacity: 1.0,
+      size: 1.1,       // Multiple of the car's width and length.
+      fadeStart: 0.35,  // Smaller values give a wider soft edge.
+    };
+    const footprint = carBounds.getSize(new THREE.Vector3());
+    const footprintCenter = carBounds.getCenter(new THREE.Vector3());
+    baseShadowPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(
+        footprint.x * baseShadowSettings.size,
+        footprint.z * baseShadowSettings.size,
+      ),
+      new THREE.ShaderMaterial({
+        uniforms: {
+          opacity: { value: baseShadowSettings.opacity },
+          fadeStart: { value: baseShadowSettings.fadeStart },
+        },
+        vertexShader: `
+          varying vec2 ovalUV;
+          void main() {
+            ovalUV = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec2 ovalUV;
+          uniform float opacity;
+          uniform float fadeStart;
+          void main() {
+            float radius = length((ovalUV - 0.5) * 2.0);
+            float falloff = 1.0 - smoothstep(fadeStart, 1.0, radius);
+            gl_FragColor = vec4(0.04, 0.05, 0.07, opacity * falloff);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+    );
+    baseShadowPlane.rotation.x = -Math.PI / 2;
+    baseShadowPlane.position.set(footprintCenter.x, groundY + 0.0005, footprintCenter.z);
+    baseShadowPlane.renderOrder = -2;
+    scene.add(baseShadowPlane);
+
     // Contact shadow settings
     const contactSettings = {
       // The composer blends in linear light; 0.05 was barely visible here.
-      opacity: 0.38,
+      opacity: 0.8,
       height: 0.9,
-      softness: 8,
+      gapFill: 0.055, // Close narrow projection gaps, in normalized scene units; 0 disables.
+      bodySoftness: 12, // Broad interior smoothing at 512px; independent of edge softness.
+      softness: 12, // Gaussian sigma in shadow-texture pixels (0–16).
     };
 
     const shadowSize = 6;
@@ -806,17 +1002,24 @@ loader.load(
           float strength =
             1.0 - smoothstep(0.0, fadeHeight, height);
 
-          gl_FragColor = vec4(
-            0.0,
-            0.0,
-            0.0,
-            strength
-          );
+          // Red stores coverage; alpha stores height-weighted strength.
+          gl_FragColor = vec4(step(0.00001, strength), 0.0, 0.0, strength);
         }
       `,
 
       side: THREE.DoubleSide,
-      blending: THREE.NoBlending,
+      // Accumulate the strongest ground-proximity value at each pixel.
+      // With depth disabled, the roof cannot hide the tires/underside.
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.MaxEquation,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneFactor,
+      blendEquationAlpha: THREE.MaxEquation,
+      blendSrcAlpha: THREE.OneFactor,
+      blendDstAlpha: THREE.OneFactor,
       toneMapped: false,
     });
 
@@ -835,19 +1038,21 @@ loader.load(
       contactScene.add(shadowMesh);
     });
 
-    // Capture the underside of the car.
+    // Capture straight down from above the complete car. With up = -Z,
+    // the captured X/Z orientation matches the ground plane without a UV flip.
+    const captureTop = Math.max(carBounds.max.y, groundY + contactSettings.height) + 0.01;
     const contactCamera = new THREE.OrthographicCamera(
       -shadowSize / 2,
       shadowSize / 2,
       shadowSize / 2,
       -shadowSize / 2,
       0.001,
-      contactSettings.height + 0.01,
+      captureTop - groundY + 0.01,
     );
 
-    contactCamera.position.set(0, groundY - 0.01, 0);
+    contactCamera.position.set(0, captureTop, 0);
     contactCamera.up.set(0, 0, -1);
-    contactCamera.lookAt(0, groundY + 1, 0);
+    contactCamera.lookAt(0, groundY, 0);
     contactCamera.updateMatrixWorld(true);
 
     const oldTarget = renderer.getRenderTarget();
@@ -864,6 +1069,182 @@ loader.load(
 
     contactMaterial.dispose();
 
+    // Close narrow gaps in the top-down height mask before blurring.
+    // A max filter followed by a min filter bridges the tire/body seams
+    // without permanently expanding the outer silhouette like dilation alone.
+    // This is a stylized contact-shadow approximation, not ray-traced lighting.
+    const gapRadius = Math.min(32, Math.max(0,
+      Math.round(contactSettings.gapFill * shadowResolution / shadowSize)));
+    if (gapRadius > 0) {
+      const options = {
+        minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+        depthBuffer: false, stencilBuffer: false,
+      };
+      const a = new THREE.WebGLRenderTarget(shadowResolution, shadowResolution, options);
+      const b = new THREE.WebGLRenderTarget(shadowResolution, shadowResolution, options);
+      const filterScene = new THREE.Scene();
+      const filterCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      const geometry = new THREE.PlaneGeometry(2, 2);
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          sourceTexture: { value: contactTarget.texture },
+          texelStep: { value: new THREE.Vector2() },
+          radius: { value: gapRadius },
+          expand: { value: true },
+        },
+        vertexShader: `
+          varying vec2 filterUV;
+          void main() {
+            filterUV = uv;
+            gl_Position = vec4(position.xy, 0.0, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D sourceTexture;
+          uniform vec2 texelStep;
+          uniform int radius;
+          uniform bool expand;
+          varying vec2 filterUV;
+          void main() {
+            vec2 result = expand ? vec2(0.0) : vec2(1.0);
+            for (int i = -32; i <= 32; i++) {
+              if (abs(i) > radius) continue;
+              vec2 value = texture2D(sourceTexture,
+                filterUV + texelStep * float(i)).ra;
+              result = expand ? max(result, value) : min(result, value);
+            }
+            gl_FragColor = vec4(result.x, 0.0, 0.0, result.y);
+          }
+        `,
+        blending: THREE.NoBlending,
+        depthTest: false, depthWrite: false, toneMapped: false,
+      });
+      const quad = new THREE.Mesh(geometry, material);
+      quad.frustumCulled = false;
+      filterScene.add(quad);
+      const previousTarget = renderer.getRenderTarget();
+      const previousAutoClear = renderer.autoClear;
+      const pass = (source, target, x, y, expand) => {
+        material.uniforms.sourceTexture.value = source.texture;
+        material.uniforms.texelStep.value.set(x / shadowResolution, y / shadowResolution);
+        material.uniforms.expand.value = expand;
+        renderer.setRenderTarget(target);
+        renderer.render(filterScene, filterCamera);
+      };
+      try {
+        renderer.autoClear = false;
+        pass(contactTarget, a, 1, 0, true);
+        pass(a, b, 0, 1, true);
+        pass(b, a, 1, 0, false);
+        pass(a, contactTarget, 0, 1, false);
+      } finally {
+        renderer.setRenderTarget(previousTarget);
+        renderer.autoClear = previousAutoClear;
+        geometry.dispose();
+        material.dispose();
+        a.dispose();
+        b.dispose();
+      }
+    }
+
+    // Bake a separable Gaussian blur once, using adjacent texels rather than
+    // widely spaced copies of the silhouette. The display shader combines the edge and interior masks.
+    const blurSigma = THREE.MathUtils.clamp(contactSettings.softness, 0, 16);
+    let bodyTarget = contactTarget;
+    {
+      const blurTarget = new THREE.WebGLRenderTarget(shadowResolution, shadowResolution, {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        depthBuffer: false,
+        stencilBuffer: false,
+      });
+      const blurScene = new THREE.Scene();
+      const blurCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      const blurGeometry = new THREE.PlaneGeometry(2, 2);
+      const blurMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+          sourceTexture: { value: contactTarget.texture },
+          texelStep: { value: new THREE.Vector2(1 / shadowResolution, 0) },
+          sigma: { value: Math.max(blurSigma, 0.001) },
+        },
+        vertexShader: `
+          varying vec2 blurUV;
+          void main() {
+            blurUV = uv;
+            gl_Position = vec4(position.xy, 0.0, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D sourceTexture;
+          uniform vec2 texelStep;
+          uniform float sigma;
+          varying vec2 blurUV;
+          void main() {
+            vec2 sum = vec2(0.0);
+            float weightSum = 0.0;
+            float radius = ceil(3.0 * sigma);
+            for (int i = -48; i <= 48; i++) {
+              float offset = float(i);
+              if (abs(offset) > radius) continue;
+              float weight = exp(-0.5 * offset * offset / (sigma * sigma));
+              sum += texture2D(sourceTexture, blurUV + texelStep * offset).ra * weight;
+              weightSum += weight;
+            }
+            gl_FragColor = vec4(sum.x / weightSum, 0.0, 0.0, sum.y / weightSum);
+          }
+        `,
+        blending: THREE.NoBlending,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      const blurQuad = new THREE.Mesh(blurGeometry, blurMaterial);
+      blurQuad.frustumCulled = false;
+      blurScene.add(blurQuad);
+      const previousTarget = renderer.getRenderTarget();
+      const previousAutoClear = renderer.autoClear;
+      try {
+        renderer.autoClear = false;
+        renderer.setRenderTarget(blurTarget);
+        renderer.render(blurScene, blurCamera);
+        blurMaterial.uniforms.sourceTexture.value = blurTarget.texture;
+        blurMaterial.uniforms.texelStep.value.set(0, 1 / shadowResolution);
+        renderer.setRenderTarget(contactTarget);
+        renderer.render(blurScene, blurCamera);
+
+        // Smooth strength and coverage together, then normalize in the
+        // display shader. This softens interior bands without widening
+        // the silhouette or weakening it at the edges.
+        const bodyResolution = 512;
+        const bodyOptions = {
+          minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+          depthBuffer: false, stencilBuffer: false,
+        };
+        const bodyTemp = new THREE.WebGLRenderTarget(bodyResolution, bodyResolution, bodyOptions);
+        bodyTarget = new THREE.WebGLRenderTarget(bodyResolution, bodyResolution, bodyOptions);
+        try {
+          blurMaterial.uniforms.sigma.value =
+            THREE.MathUtils.clamp(contactSettings.bodySoftness, 0.001, 16);
+          blurMaterial.uniforms.sourceTexture.value = contactTarget.texture;
+          blurMaterial.uniforms.texelStep.value.set(1 / bodyResolution, 0);
+          renderer.setRenderTarget(bodyTemp);
+          renderer.render(blurScene, blurCamera);
+          blurMaterial.uniforms.sourceTexture.value = bodyTemp.texture;
+          blurMaterial.uniforms.texelStep.value.set(0, 1 / bodyResolution);
+          renderer.setRenderTarget(bodyTarget);
+          renderer.render(blurScene, blurCamera);
+        } finally {
+          bodyTemp.dispose();
+        }
+      } finally {
+        renderer.setRenderTarget(previousTarget);
+        renderer.autoClear = previousAutoClear;
+        blurGeometry.dispose();
+        blurMaterial.dispose();
+        blurTarget.dispose();
+      }
+    }
+
     // Display the blurred contact shadow.
     const contactShadow = new THREE.Mesh(
       new THREE.PlaneGeometry(shadowSize, shadowSize),
@@ -872,11 +1253,9 @@ loader.load(
           shadowTexture: {
             value: contactTarget.texture,
           },
+          bodyTexture: { value: bodyTarget.texture },
           opacity: {
             value: contactSettings.opacity,
-          },
-          blurStep: {
-            value: contactSettings.softness / shadowResolution,
           },
         },
 
@@ -895,30 +1274,21 @@ loader.load(
 
         fragmentShader: `
           uniform sampler2D shadowTexture;
+          uniform sampler2D bodyTexture;
           uniform float opacity;
-          uniform float blurStep;
 
           varying vec2 shadowUV;
 
           void main() {
-            float shadow = 0.0;
-            float totalWeight = 0.0;
-
-            for (int x = -2; x <= 2; x++) {
-              for (int y = -2; y <= 2; y++) {
-                vec2 offset = vec2(float(x), float(y));
-
-                float weight =
-                  exp(-dot(offset, offset) / 3.0);
-
-                shadow += texture2D(
-                  shadowTexture,
-                  shadowUV + offset * blurStep
-                ).a * weight;
-
-                totalWeight += weight;
-              }
-            }
+            vec4 local = texture2D(shadowTexture, shadowUV);
+            vec4 broad = texture2D(bodyTexture, shadowUV);
+            float bodyStrength = clamp(broad.a / max(broad.r, 0.0001), 0.0, 1.0);
+            float localStrength = clamp(local.a / max(local.r, 0.0001), 0.0, 1.0);
+            // Preserve only the strongest near-ground contacts.
+            float contactWeight = smoothstep(0.985, 0.999, localStrength);
+            float strength = mix(bodyStrength, max(bodyStrength, localStrength), contactWeight);
+            // Do not turn faint, high-up projections into opaque extensions.
+            float shadow = min(strength * local.r, local.a + 0.04 * local.r);
 
             float radius =
               length((shadowUV - 0.5) * 6.0);
@@ -934,7 +1304,7 @@ loader.load(
               0.0,
               0.0,
               0.0,
-              shadow / totalWeight *
+              shadow *
               opacity *
               groundFade
             );
@@ -950,7 +1320,7 @@ loader.load(
     contactShadow.rotation.x = -Math.PI / 2;
     contactShadow.position.y = groundY + 0.001;
 
-    ground.renderOrder = -2;
+    ground.renderOrder = -3;
     contactShadow.renderOrder = -1;
 
     contactShadowPlane = contactShadow;
@@ -981,7 +1351,8 @@ loader.load(
     controls.target.set(0, 0, 0);
     closeupMinDistance = sphere.radius * 0.3;
     controls.minDistance = closeupMinDistance;
-    controls.maxDistance = distance * 4;
+    exteriorMaxDistance = distance * 4;
+    controls.maxDistance = exteriorMaxDistance;
 
     // Your Overview pan offset
     const overviewRight = new THREE.Vector3()
@@ -1016,6 +1387,7 @@ loader.load(
     });
 
     presets = {
+      ...interiorPresets,
       Overview: overview,
       Front: {
         position: [0.010901050324025816, 0, 5.068318534132417],
@@ -1081,12 +1453,25 @@ loader.load(
       });
     });
 
-    ui.ready(paintMaterials.length > 0);
+    doorControls?.dispose();
+    doorControls = createDoorControls({
+      root: gltf.scene,
+      clips: gltf.animations,
+      camera,
+      canvas: renderer.domElement,
+      viewer,
+      onToggle: () => { controls.autoRotate = false; },
+    });
 
-    status.textContent = "Drag to rotate • Scroll to zoom • Right-drag to pan";
+    ui.ready(paintMaterials.length > 0);
+    modelReadyForReveal = true;
+
+    status.textContent = "Drag to rotate • Scroll to zoom • Right-drag to pan" +
+      (doorControls.count ? " • Click a door icon to open/close" : "");
   },
 
   (event) => {
+    loadingScreen.progress(event);
     if (event.total > 0) {
       const percent = Math.round((event.loaded / event.total) * 100);
 
@@ -1099,6 +1484,7 @@ loader.load(
 
     status.textContent =
       "Could not load model. Check public/models/porsche.glb.";
+    loadingScreen.error(status.textContent);
   },
 );
 
@@ -1129,6 +1515,9 @@ new ResizeObserver(() => {
 
 // Render loop
 renderer.setAnimationLoop(() => {
+  const frameTime = performance.now();
+  const frameDelta = previousFrameTime === null ? 0 : (frameTime - previousFrameTime) / 1000;
+  previousFrameTime = frameTime;
   if (transition) {
     const t = Math.min((performance.now() - transition.start) / viewTransitionSettings.duration, 1);
 
@@ -1161,9 +1550,20 @@ renderer.setAnimationLoop(() => {
 
   // OrbitControls constraints apply to interaction, not the exterior travel path.
   if (!transition) controls.update();
+  doorControls?.update(frameDelta);
 
   // Keep lighting, transparent blending and output conversion consistent
   // in every view. Only the blur pass changes when DOF is toggled.
   updateDistanceDof(performance.now());
   composer.render();
+  if (modelReadyForReveal) {
+    modelReadyForReveal = false;
+    loadingScreen.ready();
+  }
+});
+
+// Release hotspot DOM and animation bindings during Vite hot replacement.
+if (import.meta.hot) import.meta.hot.dispose(() => {
+  doorControls?.dispose();
+  loadingScreen.dispose();
 });

@@ -1,0 +1,28 @@
+/* Centered Porsche header logo. Original JPEG preserved. */
+header.porsche-site-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  height: auto;
+  min-height: 120px;
+  background: #fff;
+}
+.porsche-site-header .brand { justify-self: start; }
+.porsche-site-header .project-tag { justify-self: end; text-align: right; }
+.header-porsche-logo {
+  display: block;
+  width: 260px;
+  height: auto;
+  max-width: 100%;
+  justify-self: center;
+}
+@media (max-width: 700px) {
+  header.porsche-site-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    padding: 8px 18px 16px;
+  }
+  .porsche-site-header .header-porsche-logo { grid-row: 1; }
+  .porsche-site-header .brand { justify-self: center; text-align: center; }
+}
