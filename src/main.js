@@ -172,7 +172,9 @@ function fitView(view, aspect = camera.aspect) {
   const right = new THREE.Vector3().setFromMatrixColumn(basis, 0);
   const up = new THREE.Vector3().setFromMatrixColumn(basis, 1);
   const mobile = viewer.clientWidth <= mobileFrameMaxWidth;
-  const fill = mobile ? mobileFrameFill : (view.fill ?? framingFill);
+  const fill = mobile
+    ? (view.mobileFill ?? mobileFrameFill)
+    : (view.fill ?? framingFill);
   const tanHalfY = Math.tan(THREE.MathUtils.degToRad(view.fov) / 2);
   const tanY = tanHalfY * fill;
   const tanX = tanY * aspect;
@@ -1411,6 +1413,7 @@ loader.load(
       Side: {
         ...makeView([1, 0.15, 0]),
         fitToBounds: true,
+        mobileFill: 0.92, // Side profile needs extra horizontal clearance on phones.
         fill: 0.99, // Increase toward 0.98 for tighter framing.
       },
       Rear: {
