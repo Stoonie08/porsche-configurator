@@ -57,7 +57,28 @@ export function createDoorControls({ root, clips, camera, canvas, viewer, onTogg
     @keyframes porsche-door-pulse { 0% { transform:scale(.9); opacity:0; }
       20% { opacity:.6; } 100% { transform:scale(1.45); opacity:0; } }
     @media (prefers-reduced-motion:reduce) { .porsche-door-hotspot::after { animation:none; opacity:.25; } }
-    @media (pointer:coarse) { .porsche-door-hotspot { min-width:40px; min-height:40px; } }
+    /* Mobile: keep a comfortable 44px touch target, but draw only a 28px marker. */
+    @media (pointer:coarse), (max-width:700px) {
+      .porsche-door-hotspot {
+        min-width:44px; min-height:44px;
+        border:0; background:transparent; box-shadow:none;
+        backdrop-filter:none; -webkit-backdrop-filter:none;
+      }
+      .porsche-door-hotspot::before {
+        content:""; position:absolute; width:28px; height:28px;
+        left:50%; top:50%; transform:translate(-50%,-50%);
+        border:1px solid rgba(255,255,255,.85); border-radius:50%;
+        background:radial-gradient(circle at 30% 25%,rgba(255,255,255,.32),rgba(255,255,255,.07) 70%);
+        backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px);
+        box-shadow:0 1px 4px rgba(0,0,0,.16);
+        pointer-events:none;
+      }
+      .porsche-door-hotspot::after {
+        inset:auto; width:32px; height:32px; left:50%; top:50%;
+        margin-left:-16px; margin-top:-16px;
+        border-color:rgba(255,255,255,.4);
+      }
+    }
   `;
   const overlay = document.createElement('div');
   overlay.className = 'porsche-door-hotspots';
