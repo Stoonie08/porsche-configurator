@@ -39,7 +39,7 @@ const bottomFramePadding = 5;
 // Mobile has a narrow canvas plus controls overlaying the rendered scene.
 // Keep desktop framing unchanged; fit mobile presets into the unobstructed area.
 const mobileFrameMaxWidth = 767;
-const mobileFrameFill = 0.82;
+const mobileFrameFill = 1.15; // Tighter mobile framing, matching the preferred full-car view.
 const mobileTopReservePx = 92;
 const mobileBottomReservePx = 132;
 const fullCarZoomRatio = 0.7; // Allow 10% closer than the fitted preset.
