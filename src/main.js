@@ -36,6 +36,12 @@ let autoFrame = true;
 // Fraction of the viewer available to full-car preset framing.
 const framingFill = 1.9;
 const bottomFramePadding = 5;
+// Mobile has a narrow canvas plus controls overlaying the rendered scene.
+// Keep desktop framing unchanged; fit mobile presets into the unobstructed area.
+const mobileFrameMaxWidth = 767;
+const mobileFrameFill = 0.82;
+const mobileTopReservePx = 92;
+const mobileBottomReservePx = 132;
 const fullCarZoomRatio = 0.7; // Allow 10% closer than the fitted preset.
 let closeupMinDistance = 0.1;
 let navigationInterior = false;
@@ -165,13 +171,19 @@ function fitView(view, aspect = camera.aspect) {
   const basis = new THREE.Matrix4().lookAt(position, target, camera.up);
   const right = new THREE.Vector3().setFromMatrixColumn(basis, 0);
   const up = new THREE.Vector3().setFromMatrixColumn(basis, 1);
-  const fill = view.fill ?? framingFill;
-  const tanY = Math.tan(THREE.MathUtils.degToRad(view.fov) / 2) * fill;
+  const mobile = viewer.clientWidth <= mobileFrameMaxWidth;
+  const fill = mobile ? mobileFrameFill : (view.fill ?? framingFill);
+  const tanHalfY = Math.tan(THREE.MathUtils.degToRad(view.fov) / 2);
+  const tanY = tanHalfY * fill;
   const tanX = tanY * aspect;
-  const bottomFraction = 1 - 2 * Math.min(bottomFramePadding / Math.max(viewer.clientHeight, 1), 0.25);
-  const bottomTan = Math.tan(THREE.MathUtils.degToRad(view.fov) / 2) * bottomFraction;
-  // Side can fit closer than its original preset distance.
-  let distance = view.fitToBounds
+  const height = Math.max(viewer.clientHeight, 1);
+  const topReserve = mobile ? Math.min(mobileTopReservePx, height * 0.2) : 0;
+  const bottomReserve = mobile ? Math.min(mobileBottomReservePx, height * 0.25) : bottomFramePadding;
+  // Convert the unobstructed canvas edges to angular limits. These limits
+  // account for perspective and prevent the overlay from covering the car.
+  const topTan = tanY * Math.max(0.15, 1 - 2 * topReserve / height);
+  const bottomTan = tanY * Math.max(0.15, 1 - 2 * bottomReserve / height);
+  let distance = mobile || view.fitToBounds
     ? camera.near * 2
     : position.distanceTo(target);
   for (const x of [framingBounds.min.x, framingBounds.max.x]) {
@@ -179,11 +191,11 @@ function fitView(view, aspect = camera.aspect) {
       for (const z of [framingBounds.min.z, framingBounds.max.z]) {
         const offset = new THREE.Vector3(x, y, z).sub(target);
         const depthOffset = offset.dot(backward);
+        const verticalOffset = offset.dot(up);
         distance = Math.max(
           distance,
-          depthOffset + Math.abs(offset.dot(right)) / tanX,
-          depthOffset + Math.abs(offset.dot(up)) / tanY,
-          depthOffset + Math.max(0, -offset.dot(up)) / bottomTan,
+          depthOffset + Math.abs(offset.dot(right)) / Math.max(tanX, 1e-6),
+          depthOffset + (verticalOffset >= 0 ? verticalOffset / topTan : -verticalOffset / bottomTan),
           depthOffset + camera.near * 2,
         );
       }
