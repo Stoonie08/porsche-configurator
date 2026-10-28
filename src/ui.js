@@ -292,6 +292,7 @@ export function createUI() {
 
         <p class="study-note">
           Independent portfolio project. Not affiliated with Porsche.
+          <a href="${import.meta.env.BASE_URL}privacy.html">Privacy &amp; browser storage</a>
         </p>
       </aside>
     </main>

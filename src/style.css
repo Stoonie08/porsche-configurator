@@ -586,6 +586,19 @@ dd {
   margin: 0;
   text-align: right;
 }
+.study-note a {
+  display: block;
+  margin-top: 0.6rem;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.study-note a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 4px;
+}
+
 .study-note {
   font-size: 10px;
   color: #999;
