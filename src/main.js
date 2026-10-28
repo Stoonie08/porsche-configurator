@@ -1,9 +1,11 @@
+import { createTimeVariants } from "./time_variants.js";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { BokehPass } from "three/addons/postprocessing/BokehPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { createUI } from "./ui.js";
 import { createDoorControls } from "./door_controls.js";
@@ -24,7 +26,59 @@ let previousFrameTime = null;
 let panorama = null;
 let backgroundMode = "studio";
 let timeOfDay = "day";
+let timeVariants = null;
+let timeVariantRoot = null;
+let selectedPaintColor = null;
+const originalPaintColors = new WeakMap();
+function refreshTimePaintMaterials() {
+  if (!timeVariantRoot) return;
+  paintMaterials.length = 0;
+  const seen = new Set();
+  timeVariantRoot.traverse(object => {
+    if (!object.isMesh) return;
+    for (const material of (Array.isArray(object.material) ? object.material : [object.material])) {
+      if (material.name !== "metalicCarPaint_mtl" || seen.has(material)) continue;
+      seen.add(material);
+      if (!originalPaintColors.has(material)) originalPaintColors.set(material, material.color.clone());
+      const original = originalPaintColors.get(material);
+      material.color.copy(original);
+      if (selectedPaintColor !== null) material.color.set(selectedPaintColor);
+      paintMaterials.push({material, original});
+    }
+  });
+}
+function applyTimeVariant() {
+  timeVariants?.apply(timeOfDay);
+  if (timeVariants) refreshTimePaintMaterials();
+}
 let groundMaterial = null;
+// Floor settings: used both at model load and when switching Day/Night.
+const groundSettings = {
+  day: { color: "#d7dddf", roughness: 0.1 },
+  night: { color: "#9b9b9b", roughness: 0.8 },
+};
+function applyGroundAppearance() {
+  if (!groundMaterial) return;
+  const settings = groundSettings[timeOfDay === "night" ? "night" : "day"];
+  groundMaterial.color.set(settings.color);
+  groundMaterial.roughness = settings.roughness;
+}
+// Live testing; edit groundSettings above to retain values after a reload.
+window.setGroundAppearance = (changes = {}, mode = timeOfDay) => {
+  if (mode !== "day" && mode !== "night") throw new Error("Use day or night.");
+  const settings = groundSettings[mode];
+  if (changes.color !== undefined) {
+    if (typeof changes.color !== "string" || !/^#[0-9a-f]{6}$/i.test(changes.color)) {
+      throw new Error("Use a six-digit hex color, such as #252525.");
+    }
+    settings.color = changes.color;
+  }
+  if (Number.isFinite(changes.roughness)) {
+    settings.roughness = Math.max(0, Math.min(1, changes.roughness));
+  }
+  applyGroundAppearance();
+  return { ...settings };
+};
 let paintMaterials = [];
 let overview = null;
 let transition = null;
@@ -129,7 +183,7 @@ const interiorPresets = {
 function setNavigationLimits(view = capture()) {
   navigationInterior = Boolean(view.interior);
   const tire = activeView === "Tire" && !navigationInterior;
-  controls.enablePan = tire;
+  controls.enablePan = !navigationInterior && (tire || activeView === "Top");
   const distance = new THREE.Vector3(...view.position)
     .distanceTo(new THREE.Vector3(...view.target));
   if (navigationInterior) {
@@ -165,6 +219,8 @@ function setNavigationLimits(view = capture()) {
 
 function fitView(view, aspect = camera.aspect) {
   if (!framingBounds || !view || view.interior) return view;
+  // Keep the saved Top composition on desktop; still fit narrow mobile screens.
+  if (view.preserveDesktopFraming && viewer.clientWidth > mobileFrameMaxWidth) return view;
   const target = new THREE.Vector3(...view.target);
   const position = new THREE.Vector3(...view.position);
   const backward = position.clone().sub(target).normalize();
@@ -301,7 +357,42 @@ bokeh.render = (renderer, writeBuffer, readBuffer, ...args) => {
 };
 
 composer.addPass(bokeh);
+// HDR bloom must run before OutputPass tone mapping. It does not alter materials.
+// Reuse the beauty render: no extra render of the car or material swapping.
+// Reduce bloom buffer dimensions relative to the standard UnrealBloomPass.
+// Bright reflections can also bloom; this is brightness-based, not material-based.
+class LightweightBloomPass extends UnrealBloomPass {
+  setSize(width, height) {
+    super.setSize(Math.max(1, Math.round(width * 0.5)),
+                  Math.max(1, Math.round(height * 0.5)));
+  }
+}
+const headlightBloomSettings = {
+  enabled: true,
+  strength: 0.22,
+  radius: 0.25,
+  threshold: 3.5,
+};
+const headlightBloom = new LightweightBloomPass(
+  new THREE.Vector2(1, 1), headlightBloomSettings.strength,
+  headlightBloomSettings.radius, headlightBloomSettings.threshold
+);
+headlightBloom.enabled = timeOfDay === "night" && headlightBloomSettings.enabled;
+composer.addPass(headlightBloom);
 composer.addPass(new OutputPass());
+// Live tuning in the browser console, e.g. setHeadlightBloom({ strength: 0.15 }).
+window.setHeadlightBloom = (changes = {}) => {
+  if (typeof changes.enabled === "boolean") headlightBloomSettings.enabled = changes.enabled;
+  for (const key of ["strength", "radius", "threshold"]) {
+    const value = changes[key];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+      headlightBloomSettings[key] = key === "radius" ? Math.min(value, 1) : value;
+    }
+    headlightBloom[key] = headlightBloomSettings[key];
+  }
+  headlightBloom.enabled = timeOfDay === "night" && headlightBloomSettings.enabled;
+  return { ...headlightBloomSettings };
+};
 
 let activeView = "Overview";
 
@@ -324,6 +415,9 @@ let dofNeedsRefocus = true;
 const dofRay = new THREE.Raycaster();
 const dofCenter = new THREE.Vector2(0, 0);
 const dofPoint = new THREE.Vector3();
+const dofHits = [];
+const transitionTargetFrom = new THREE.Vector3();
+const transitionTargetTo = new THREE.Vector3();
 
 function updateDistanceDof(now) {
   const dt = Math.min((now - dofLastTime) / 1000, 0.1);
@@ -346,7 +440,9 @@ function updateDistanceDof(now) {
   if (dofSettings.autoFocus && dofModel && (dofNeedsRefocus || (dofAmount > 0.001 && now - dofLastFocusTime > 120))) {
     camera.updateMatrixWorld();
     dofRay.setFromCamera(dofCenter, camera);
-    const hit = dofRay.intersectObject(dofModel, true).find((entry) => {
+    dofHits.length = 0;
+    dofRay.intersectObject(dofModel, true, dofHits);
+    const hit = dofHits.find((entry) => {
       for (let object = entry.object; object; object = object.parent) {
         if (!object.visible) return false;
       }
@@ -355,6 +451,7 @@ function updateDistanceDof(now) {
     // Focus on the car under the center of the viewer; use the orbit target if missed.
     dofPoint.copy(hit ? hit.point : controls.target).applyMatrix4(camera.matrixWorldInverse);
     dofFocusTarget = Math.max(camera.near, -dofPoint.z);
+    dofHits.length = 0;
     dofLastFocusTime = now;
   }
   if (!dofSettings.autoFocus) dofFocusTarget = dofSettings.focus;
@@ -726,7 +823,7 @@ function moveTo(view) {
     return;
   }
   controls.minDistance = closeupMinDistance;
-  controls.enablePan = activeView === "Tire" && !view.interior;
+  controls.enablePan = (activeView === "Tire" || activeView === "Top") && !view.interior;
   controls.enableDamping = false;
   controls.update();
 
@@ -746,6 +843,7 @@ controls.addEventListener("start", () => {
 // Connect interface actions
 ui.connect({
   paint(color) {
+    selectedPaintColor = color;
     paintMaterials.forEach(({ material, original }) => {
       if (color === null) {
         material.color.copy(original);
@@ -800,9 +898,21 @@ ui.connect({
   environment(key, value) {
     if (key === "background" || key === "timeOfDay") {
       if (key === "background") backgroundMode = value;
-      else timeOfDay = value;
+      else {
+        const changingTime = value !== timeOfDay;
+        timeOfDay = value;
+        headlightBloom.enabled = timeOfDay === "night" && headlightBloomSettings.enabled;
+        if (changingTime) {
+          backgroundMode = timeOfDay === "night" ? "dark" : "studio";
+          ui.syncBackground(backgroundMode);
+        }
+        applyTimeVariant();
+      }
       const night = timeOfDay === "night";
-      const studioColor = night ? "#363d48" : "#d7dddf";
+      // Neutral background only for Light Studio at night.
+      const studioColor = night
+        ? (backgroundMode === "studio" ? "#b2b2b2" : "#363d48")
+        : "#d7dddf";
       if (backgroundMode === "panorama") {
         scene.background = panorama || new THREE.Color(studioColor);
       } else {
@@ -810,11 +920,11 @@ ui.connect({
           backgroundMode === "dark" ? "#24272c" : studioColor,
         );
       }
-      groundMaterial?.color.set(night ? "#555e6e" : "#d7dddf");
+      applyGroundAppearance();
       if (key === "timeOfDay") {
         scene.environmentIntensity = night ? 0.16 : 0.5;
         renderer.toneMappingExposure = night ? 0.85 : 1.25;
-        sun.intensity = night ? 0.35 : 3;
+        sun.intensity = night ? 0 : 3;
         scene.backgroundIntensity = night ? 0.12 : 0.3;
       }
     }
@@ -836,6 +946,13 @@ ui.connect({
 
 // Load the Porsche
 const loader = new GLTFLoader();
+loader.register(() => ({
+  name: "USD_time_variants_viewer",
+  async afterRoot(gltf) {
+    gltf.userData = gltf.userData || {};
+    gltf.userData.timeVariantsController = await createTimeVariants(gltf);
+  },
+}));
 const modelURL = `${import.meta.env.BASE_URL}models/porsche.glb`;
 
 loader.load(
@@ -843,6 +960,8 @@ loader.load(
   (gltf) => {
     const model = new THREE.Group();
     model.add(gltf.scene);
+    timeVariantRoot = gltf.scene;
+    timeVariants = gltf.userData.timeVariantsController;
     dofModel = model;
     scene.add(model);
 
@@ -901,7 +1020,7 @@ loader.load(
 
     // Ground plane
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(12, 12),
+      new THREE.PlaneGeometry(30, 30),
       new THREE.MeshStandardMaterial({
         color: "#d7dddf",
         roughness: 0.1,
@@ -913,7 +1032,7 @@ loader.load(
     );
 
     groundMaterial = ground.material;
-    groundMaterial.color.set(timeOfDay === "night" ? "#555e6e" : "#d7dddf");
+    applyGroundAppearance();
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = groundY;
     ground.receiveShadow = true;
@@ -1425,8 +1544,10 @@ loader.load(
       },
 
       Top: {
-        ...makeView([0, 1, 0.001]),
-        position: makeView([0, 1, 0.001]).position.map((value) => value * 1.15),
+        position: [-4.845852268008019, 5.256176228938828, 4.282193321135155],
+        target: [-0.13774443169540482, -0.15550155773199678, 0.18665643200156348],
+        fov: 20,
+        preserveDesktopFraming: true,
       },
 
       Tire: {
@@ -1446,27 +1567,9 @@ loader.load(
       controls.saveState();
     }
 
-    // Locate the paint material.
-    const seen = new Set();
-
-    model.traverse((object) => {
-      if (!object.isMesh) return;
-
-      const materials = Array.isArray(object.material)
-        ? object.material
-        : [object.material];
-
-      materials.forEach((material) => {
-        if (material.name === "metalicCarPaint_mtl" && !seen.has(material)) {
-          seen.add(material);
-
-          paintMaterials.push({
-            material,
-            original: material.color.clone(),
-          });
-        }
-      });
-    });
+    // Switch before revealing the model; keep paint controls in sync.
+    applyTimeVariant();
+    refreshTimePaintMaterials();
 
     doorControls?.dispose();
     doorControls = createDoorControls({
@@ -1534,15 +1637,15 @@ renderer.setAnimationLoop(() => {
   const frameDelta = previousFrameTime === null ? 0 : (frameTime - previousFrameTime) / 1000;
   previousFrameTime = frameTime;
   if (transition) {
-    const t = Math.min((performance.now() - transition.start) / viewTransitionSettings.duration, 1);
+    const t = Math.min((frameTime - transition.start) / viewTransitionSettings.duration, 1);
 
     const k = t * t * (3 - 2 * t);
 
     camera.position.copy(sampleViewTransition(transition, t));
 
     controls.target.lerpVectors(
-      new THREE.Vector3(...transition.from.target),
-      new THREE.Vector3(...transition.to.target),
+      transitionTargetFrom.fromArray(transition.from.target),
+      transitionTargetTo.fromArray(transition.to.target),
       k,
     );
 
@@ -1569,7 +1672,7 @@ renderer.setAnimationLoop(() => {
 
   // Keep lighting, transparent blending and output conversion consistent
   // in every view. Only the blur pass changes when DOF is toggled.
-  updateDistanceDof(performance.now());
+  updateDistanceDof(frameTime);
   composer.render();
   if (modelReadyForReveal) {
     modelReadyForReveal = false;

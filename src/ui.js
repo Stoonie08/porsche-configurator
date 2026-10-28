@@ -604,11 +604,14 @@ export function createUI() {
         event.stopPropagation();
       }
     });
+  function syncBackground(mode) {
+    document.querySelectorAll("[data-background]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.background === mode));
+    });
+  }
   document.querySelectorAll("[data-background]").forEach((button) => {
     button.onclick = () => {
-      document.querySelectorAll("[data-background]").forEach((other) => {
-        other.setAttribute("aria-pressed", String(other === button));
-      });
+      syncBackground(button.dataset.background);
       actions.environment?.("background", button.dataset.background);
     };
   });
@@ -873,6 +876,7 @@ export function createUI() {
 
     syncFov,
     syncAutoRotate,
+    syncBackground,
 
     manualView() {
       document.querySelectorAll(".view-button").forEach((button) => {
