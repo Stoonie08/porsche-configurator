@@ -841,6 +841,39 @@ export function createUI() {
 
   bindThemeSelector(document.querySelector("#site-theme"));
 
+  let tipTimer;
+  let tipHideTimer;
+  function showNavigationTip(hasDoors = false) {
+    clearTimeout(tipTimer);
+    clearTimeout(tipHideTimer);
+    const touch = window.matchMedia("(any-pointer: coarse)").matches;
+    const text = touch
+      ? "Swipe to rotate • Pinch to zoom • Two-finger drag to pan in Tire view"
+      : "Drag to rotate • Scroll to zoom • Right-drag to pan in Tire view";
+    const message = text + (hasDoors
+      ? (touch ? " • Tap a door icon to open/close" : " • Click a door icon to open/close")
+      : "");
+    const tips = [...document.querySelectorAll("#status, .viewer-caption")];
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const tip of tips) {
+      tip.textContent = message;
+      tip.hidden = false;
+      tip.style.visibility = "visible";
+      tip.style.opacity = "1";
+      tip.style.pointerEvents = "none";
+      tip.style.transition = reducedMotion ? "none" : "opacity 600ms ease";
+    }
+    tipTimer = window.setTimeout(() => {
+      for (const tip of tips) tip.style.opacity = "0";
+      tipHideTimer = window.setTimeout(() => {
+        for (const tip of tips) {
+          tip.hidden = true;
+          tip.style.visibility = "hidden";
+        }
+      }, reducedMotion ? 0 : 600);
+    }, 15000);
+  }
+
   return {
     viewer: document.querySelector("#viewer"),
     status: document.querySelector("#status"),
@@ -877,6 +910,7 @@ export function createUI() {
     syncFov,
     syncAutoRotate,
     syncBackground,
+    showNavigationTip,
 
     manualView() {
       document.querySelectorAll(".view-button").forEach((button) => {

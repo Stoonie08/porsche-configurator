@@ -183,7 +183,7 @@ const interiorPresets = {
 function setNavigationLimits(view = capture()) {
   navigationInterior = Boolean(view.interior);
   const tire = activeView === "Tire" && !navigationInterior;
-  controls.enablePan = !navigationInterior && (tire || activeView === "Top");
+  controls.enablePan = tire;
   const distance = new THREE.Vector3(...view.position)
     .distanceTo(new THREE.Vector3(...view.target));
   if (navigationInterior) {
@@ -823,7 +823,7 @@ function moveTo(view) {
     return;
   }
   controls.minDistance = closeupMinDistance;
-  controls.enablePan = (activeView === "Tire" || activeView === "Top") && !view.interior;
+  controls.enablePan = activeView === "Tire" && !view.interior;
   controls.enableDamping = false;
   controls.update();
 
@@ -1584,8 +1584,7 @@ loader.load(
     ui.ready(paintMaterials.length > 0);
     modelReadyForReveal = true;
 
-    status.textContent = "Drag to rotate • Scroll to zoom • Right-drag to pan" +
-      (doorControls.count ? " • Click a door icon to open/close" : "");
+
   },
 
   (event) => {
@@ -1677,6 +1676,7 @@ renderer.setAnimationLoop(() => {
   if (modelReadyForReveal) {
     modelReadyForReveal = false;
     loadingScreen.ready();
+    ui.showNavigationTip(Boolean(doorControls?.count));
   }
 });
 
