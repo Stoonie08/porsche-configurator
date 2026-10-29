@@ -1,3 +1,4 @@
+import { createCourtyardEnvironment } from "./courtyard_environment.js";
 import { createTimeVariants } from "./time_variants.js";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -52,6 +53,7 @@ function applyTimeVariant() {
   if (timeVariants) refreshTimePaintMaterials();
 }
 let groundMaterial = null;
+let studioGround = null;
 // Floor settings: used both at model load and when switching Day/Night.
 const groundSettings = {
   day: { color: "#d7dddf", roughness: 0.1 },
@@ -313,7 +315,7 @@ const renderTarget = new THREE.WebGLRenderTarget(
   viewer.clientHeight,
   {
     type: THREE.HalfFloatType,
-    samples: 4,
+    samples: 8,
   },
 );
 
@@ -371,7 +373,7 @@ const headlightBloomSettings = {
   enabled: true,
   strength: 0.22,
   radius: 0.25,
-  threshold: 3.5,
+  threshold: 1.5,
 };
 const headlightBloom = new LightweightBloomPass(
   new THREE.Vector2(1, 1), headlightBloomSettings.strength,
@@ -563,6 +565,98 @@ sun.shadow.normalBias = 0.005;
 
 scene.add(sun);
 scene.add(sun.target);
+
+// Additional environment: geometry is loaded only after Courtyard is selected.
+const courtyardFeedback = document.createElement("p");
+courtyardFeedback.className = "scene-feedback";
+courtyardFeedback.id = "courtyard-feedback";
+courtyardFeedback.setAttribute("role", "status");
+courtyardFeedback.hidden = true;
+document.querySelector("#scene-settings").append(courtyardFeedback);
+const courtyardButton = document.createElement("button");
+courtyardButton.type = "button";
+courtyardButton.className = "background-tile";
+courtyardButton.dataset.background = "courtyard";
+courtyardButton.setAttribute("aria-pressed", "false");
+courtyardButton.disabled = true;
+const courtyardArt = document.createElement("span");
+courtyardArt.className = "background-art";
+courtyardArt.setAttribute("aria-hidden", "true");
+courtyardArt.style.background = "linear-gradient(135deg, #4e5150 0 23%, transparent 23%), linear-gradient(45deg, #a2a49f 0 24%, transparent 24%), linear-gradient(145deg, #dedbd1 0 65%, #a7a9a3 65%)";
+const courtyardTitle = document.createElement("span");
+courtyardTitle.textContent = "Courtyard";
+courtyardButton.append(courtyardArt, courtyardTitle);
+const backgroundOptions = document.querySelector(".background-options");
+backgroundOptions.append(courtyardButton);
+backgroundOptions.style.gridTemplateColumns = "repeat(2, minmax(0, 1fr))";
+const courtyard = createCourtyardEnvironment({
+  scene,
+  renderer,
+  url: `${import.meta.env.BASE_URL}models/brutalist_courtyard.glb`,
+  alignGround: true, // Align the courtyard floor to the current car's tire height.
+  groundOffset: 0,  // Additional vertical offset in viewer units, if needed.
+  onChange(state) {
+    courtyardButton.setAttribute("aria-busy", String(state.loading));
+    if (backgroundMode === "courtyard") {
+      courtyardFeedback.hidden = !state.loading && !state.error;
+      courtyardFeedback.textContent = state.error
+        ? "Courtyard could not load. Check public/models/brutalist_courtyard.glb."
+        : "Loading courtyard…";
+    } else {
+      courtyardFeedback.hidden = true;
+    }
+    refreshBackgroundAppearance();
+  },
+});
+
+function refreshBackgroundAppearance() {
+  const night = timeOfDay === "night";
+  const active = backgroundMode === "courtyard" && courtyard.active;
+  const effectiveMode = backgroundMode === "courtyard" && !active
+    ? (night ? "dark" : "studio") : backgroundMode;
+  const studioColor = night
+    ? (effectiveMode === "studio" ? "#b2b2b2" : "#363d48")
+    : "#d7dddf";
+  scene.background = effectiveMode === "panorama"
+    ? panorama || new THREE.Color(studioColor)
+    : new THREE.Color(active ? (night ? "#10151e" : "#aeb8c2")
+      : effectiveMode === "dark" ? "#24272c" : studioColor);
+  if (studioGround) studioGround.visible = !active;
+  if (contactShadowPlane) contactShadowPlane.visible = !active;
+  if (baseShadowPlane) baseShadowPlane.visible = !active;
+  sun.visible = !active;
+}
+
+function syncBackgroundEnvironment() {
+  ui.syncBackground(backgroundMode);
+  const requestedCourtyard = backgroundMode === "courtyard";
+  const result = courtyard.setEnabled(requestedCourtyard, timeOfDay === "night");
+  refreshBackgroundAppearance();
+  return result.catch(error => {
+    if (!courtyardButton.isConnected) return false;
+    console.error("Courtyard environment failed to load:", error);
+    if (backgroundMode === "courtyard") {
+      backgroundMode = timeOfDay === "night" ? "dark" : "studio";
+      ui.syncBackground(backgroundMode);
+      refreshBackgroundAppearance();
+      courtyardFeedback.textContent = "Courtyard could not load. Put brutalist_courtyard.glb in public/models/, then select Courtyard to retry.";
+      courtyardFeedback.hidden = false;
+    }
+    return false;
+  });
+}
+
+courtyardButton.addEventListener("click", () => {
+  backgroundMode = "courtyard";
+  syncBackgroundEnvironment();
+});
+// Optional live switch for testing; it uses the same path as the UI button.
+window.setCourtyardEnvironment = async (enabled = true) => {
+  backgroundMode = enabled ? "courtyard" : (timeOfDay === "night" ? "dark" : "studio");
+  await syncBackgroundEnvironment();
+  return { ...courtyard.state, background: backgroundMode,
+    studioFloorVisible: studioGround?.visible, studioSunVisible: sun.visible };
+};
 
 // Mouse and touch controls
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -909,17 +1003,6 @@ ui.connect({
         applyTimeVariant();
       }
       const night = timeOfDay === "night";
-      // Neutral background only for Light Studio at night.
-      const studioColor = night
-        ? (backgroundMode === "studio" ? "#b2b2b2" : "#363d48")
-        : "#d7dddf";
-      if (backgroundMode === "panorama") {
-        scene.background = panorama || new THREE.Color(studioColor);
-      } else {
-        scene.background = new THREE.Color(
-          backgroundMode === "dark" ? "#24272c" : studioColor,
-        );
-      }
       applyGroundAppearance();
       if (key === "timeOfDay") {
         scene.environmentIntensity = night ? 0.16 : 0.5;
@@ -927,6 +1010,7 @@ ui.connect({
         sun.intensity = night ? 0 : 3;
         scene.backgroundIntensity = night ? 0.12 : 0.3;
       }
+      syncBackgroundEnvironment();
     }
 
     if (key === "brightness") {
@@ -1031,6 +1115,7 @@ loader.load(
       }),
     );
 
+    studioGround = ground;
     groundMaterial = ground.material;
     applyGroundAppearance();
     ground.rotation.x = -Math.PI / 2;
@@ -1459,6 +1544,9 @@ loader.load(
     contactShadowPlane = contactShadow;
     scene.add(contactShadow);
     sun.target.position.set(0, groundY + 0.5, 0);
+    courtyard.setCar(model, groundY);
+    courtyardButton.disabled = false;
+    syncBackgroundEnvironment();
 
     // Camera framing
     const sphere = new THREE.Box3()
@@ -1683,5 +1771,9 @@ renderer.setAnimationLoop(() => {
 // Release hotspot DOM and animation bindings during Vite hot replacement.
 if (import.meta.hot) import.meta.hot.dispose(() => {
   doorControls?.dispose();
+  courtyard.dispose();
+  courtyardButton.remove();
+  courtyardFeedback.remove();
+  delete window.setCourtyardEnvironment;
   loadingScreen.dispose();
 });
