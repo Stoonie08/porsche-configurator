@@ -526,6 +526,105 @@ export function createUI() {
     document.querySelector("#views").append(button);
   });
 
+  // Keep all camera views reachable with mouse, keyboard, and native touch scrolling.
+  const viewStrip = document.querySelector("#views");
+  const viewNavigation = document.createElement("div");
+  viewNavigation.className = "view-navigation";
+  viewStrip.before(viewNavigation);
+  const makeScrollButton = (label, symbol) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "view-scroll-button";
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-controls", "views");
+    button.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${symbol === "‹" ? "M15 5l-7 7 7 7" : "M9 5l7 7-7 7"}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    return button;
+  };
+  const previousViews = makeScrollButton("Scroll to previous camera views", "‹");
+  const nextViews = makeScrollButton("Scroll to more camera views", "›");
+  viewNavigation.append(previousViews, viewStrip, nextViews);
+  viewStrip.tabIndex = 0;
+  viewStrip.setAttribute("role", "group");
+  viewStrip.setAttribute("aria-label", "Camera views. Swipe or use the arrow buttons to see more.");
+  const syncScrollButtons = () => {
+    previousViews.disabled = viewStrip.scrollLeft <= 1;
+    nextViews.disabled = viewStrip.scrollLeft >= viewStrip.scrollWidth - viewStrip.clientWidth - 1;
+  };
+  const scrollViews = (direction) => {
+    viewStrip.scrollBy({
+      left: direction * Math.max(120, viewStrip.clientWidth * 0.75),
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  };
+  previousViews.addEventListener("click", () => scrollViews(-1));
+  nextViews.addEventListener("click", () => scrollViews(1));
+
+  // Mouse drag works over thumbnails and the spaces between them.
+  // Touch and pen keep native scrolling and normal tap behavior.
+  let stripDrag = null;
+  let suppressDragClick = false;
+  viewStrip.addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "mouse" || event.button !== 0) return;
+    suppressDragClick = false;
+    stripDrag = { id: event.pointerId, x: event.clientX, scroll: viewStrip.scrollLeft, active: false };
+  });
+  window.addEventListener("pointermove", (event) => {
+    if (!stripDrag || event.pointerId !== stripDrag.id) return;
+    if (!(event.buttons & 1)) { endStripDrag(); return; }
+    const delta = event.clientX - stripDrag.x;
+    if (!stripDrag.active && Math.abs(delta) > 5) {
+      stripDrag.active = true;
+      suppressDragClick = true;
+      viewStrip.setPointerCapture(event.pointerId);
+      viewStrip.classList.add("is-dragging");
+    }
+    if (stripDrag.active) {
+      event.preventDefault();
+      viewStrip.scrollLeft = stripDrag.scroll - delta;
+    }
+  }, { passive: false });
+  function endStripDrag() {
+    const drag = stripDrag;
+    stripDrag = null;
+    viewStrip.classList.remove("is-dragging");
+    if (drag && viewStrip.hasPointerCapture(drag.id)) viewStrip.releasePointerCapture(drag.id);
+  }
+  ["pointerup", "pointercancel"].forEach((type) => {
+    window.addEventListener(type, (event) => {
+      if (stripDrag && event.pointerId === stripDrag.id) endStripDrag();
+    });
+  });
+  viewStrip.addEventListener("lostpointercapture", endStripDrag);
+  window.addEventListener("blur", endStripDrag);
+  viewStrip.addEventListener("click", (event) => {
+    if (suppressDragClick && event.detail !== 0) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      suppressDragClick = false;
+    }
+  }, true);
+  viewStrip.addEventListener("scroll", syncScrollButtons, { passive: true });
+  new ResizeObserver(syncScrollButtons).observe(viewStrip);
+  viewStrip.addEventListener("wheel", (event) => {
+    // Trackpad horizontal swipes remain native; do not intercept browser pinch zoom.
+    if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewStrip.clientWidth : 1;
+    const delta = event.deltaY * unit;
+    const max = viewStrip.scrollWidth - viewStrip.clientWidth;
+    if ((delta > 0 && viewStrip.scrollLeft < max - 1) || (delta < 0 && viewStrip.scrollLeft > 1)) {
+      event.preventDefault();
+      viewStrip.scrollLeft += delta;
+    }
+  }, { passive: false });
+  viewStrip.addEventListener("keydown", (event) => {
+    if (event.target !== viewStrip) return;
+    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      scrollViews(event.key === "ArrowRight" ? 1 : -1);
+    }
+  });
+  syncScrollButtons();
+
   // Summary dialog
   const dialog = document.querySelector("#summary-dialog");
 

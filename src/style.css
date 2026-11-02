@@ -1002,3 +1002,53 @@ html[data-theme="dark"] .porsche-loading-detail { color: #b2b6bc; }
 html[data-theme="dark"] .porsche-loading-actions button {
   background: #2b2e33; color: #f0f1f2; border-color: #41454b;
 }
+
+/* Camera strip navigation: prevent clipping in narrow embedded viewers. */
+.view-navigation {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  min-width: 0;
+}
+.view-navigation #views {
+  margin-top: 0;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #8b9690 transparent;
+  touch-action: pan-x pan-y;
+}
+.view-navigation #views::-webkit-scrollbar { height: 8px; }
+.view-navigation #views::-webkit-scrollbar-thumb {
+  background: #8b9690;
+  border-radius: 8px;
+}
+.view-scroll-button {
+  width: 36px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+  user-select: none;
+  padding: 0;
+  font-size: 28px;
+  line-height: 1;
+  border-radius: 12px;
+}
+.view-scroll-button:disabled { opacity: .3; cursor: default; }
+html[data-theme="dark"] .view-scroll-button {
+  background: #252b31;
+  color: #fff;
+  border-color: #505860;
+}
+
+.view-scroll-button svg { display: block; pointer-events: none; }
+
+.view-navigation #views { cursor: grab; user-select: none; }
+.view-navigation #views .view-button { cursor: grab; }
+.view-navigation #views.is-dragging,
+.view-navigation #views.is-dragging .view-button { cursor: grabbing; }
